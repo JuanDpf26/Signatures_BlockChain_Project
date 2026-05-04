@@ -10,11 +10,18 @@ const documentRoutes = require('./routes/documentRoutes');
 const app = express();
 
 // Seguridad
-app.use(helmet());
-app.use(cors());
+app.use(helmet({
+  crossOriginOpenerPolicy: false,
+}));
+
+app.use(cors({
+  origin: true, // permite cualquier origen en desarrollo
+  credentials: true,
+}));
+
 app.use(express.json());
 
-// Rate limiting — máximo 100 requests por 15 minutos por IP
+// Rate limiting
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,

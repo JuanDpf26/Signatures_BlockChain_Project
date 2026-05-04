@@ -50,14 +50,12 @@ const register = async (req, res) => {
 
     // CAPTCHA desactivado en desarrollo
 // TODO: reactivar en producción
-if (process.env.NODE_ENV === 'production') {
-  if (!captchaToken) {
-    return res.status(400).json({ error: 'Debes completar el captcha' });
-  }
-  const captchaValid = await verifyCaptcha(captchaToken);
-  if (!captchaValid) {
-    return res.status(400).json({ error: 'Captcha inválido, intenta de nuevo' });
-  }
+if (!captchaToken) {
+  return res.status(400).json({ error: 'Debes completar el captcha' });
+}
+const captchaValid = await verifyCaptcha(captchaToken);
+if (!captchaValid) {
+  return res.status(400).json({ error: 'Captcha inválido, intenta de nuevo' });
 }
 
     // Verificar si el correo ya existe
@@ -194,25 +192,48 @@ const login = async (req, res) => {
 // ────────────────────────────────────────────────
 const googleAuth = async (req, res) => {
   try {
-    const { idToken } = req.body;
+    const { idToken, isWeb } = req.body;
 
     if (!idToken) {
       return res.status(400).json({ error: 'Token de Google requerido' });
     }
 
-    const googleUser = await verifyGoogleToken(idToken);
+    let email, name, picture, googleId;
 
-    if (!googleUser) {
-      return res.status(401).json({ error: 'Token de Google inválido' });
+    if (isWeb) {
+      // En web viene accessToken — lo verificamos con la API de Google
+      const response = await fetch(
+        'https://www.googleapis.com/oauth2/v3/userinfo',
+        { headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      const googleUser = await response.json();
+
+      if (!googleUser.email) {
+        return res.status(401).json({ error: 'Token de Google inválido' });
+      }
+
+      email = googleUser.email;
+      name = googleUser.name;
+      picture = googleUser.picture;
+      googleId = googleUser.sub;
+    } else {
+      // En móvil viene idToken — lo verificamos con google-auth-library
+      const googleUser = await verifyGoogleToken(idToken);
+
+      if (!googleUser) {
+        return res.status(401).json({ error: 'Token de Google inválido' });
+      }
+
+      email = googleUser.email;
+      name = googleUser.name;
+      picture = googleUser.picture;
+      googleId = googleUser.sub;
     }
-
-    const { email, name, picture, sub: googleId } = googleUser;
 
     // Buscar usuario existente
     let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
 
     if (result.rows.length === 0) {
-      // Crear cuenta nueva con Google
       result = await pool.query(
         `INSERT INTO users (name, email, google_id, avatar_url, is_email_verified)
          VALUES ($1, $2, $3, $4, true)
@@ -220,7 +241,6 @@ const googleAuth = async (req, res) => {
         [name, email, googleId, picture]
       );
     } else {
-      // Actualizar google_id si no lo tenía
       if (!result.rows[0].google_id) {
         await pool.query(
           'UPDATE users SET google_id = $1, avatar_url = $2, last_login = NOW() WHERE id = $3',
