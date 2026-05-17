@@ -99,9 +99,12 @@ if (!captchaValid) {
 // ────────────────────────────────────────────────
 // VERIFY EMAIL
 // ────────────────────────────────────────────────
+// Reemplaza SOLO la función verifyEmail en tu authController.js
+
 const verifyEmail = async (req, res) => {
   try {
     const { token } = req.params;
+    const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
 
     const result = await pool.query(
       `SELECT id FROM users
@@ -112,7 +115,8 @@ const verifyEmail = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ error: 'Token inválido o expirado' });
+      // Redirigir a Flutter con error
+      return res.redirect(`${appBaseUrl}/#/verify-email?success=false`);
     }
 
     await pool.query(
@@ -124,13 +128,15 @@ const verifyEmail = async (req, res) => {
       [result.rows[0].id]
     );
 
-    return res.json({ message: 'Correo verificado exitosamente. Ya puedes iniciar sesión.' });
+    // Redirigir a Flutter con éxito
+    return res.redirect(`${appBaseUrl}/#/verify-email?success=true`);
+
   } catch (err) {
     console.error('ERROR VERIFY EMAIL:', err);
-    return res.status(500).json({ error: 'Error al verificar correo' });
+    const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
+    return res.redirect(`${appBaseUrl}/#/verify-email?success=false`);
   }
 };
-
 // ────────────────────────────────────────────────
 // LOGIN
 // ────────────────────────────────────────────────

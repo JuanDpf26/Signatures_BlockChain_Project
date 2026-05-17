@@ -8,13 +8,15 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+const baseUrl = process.env.APP_BASE_URL;
 
 // ────────────────────────────────────────────────
 // VERIFICACIÓN DE EMAIL
 // ────────────────────────────────────────────────
 const sendVerificationEmail = async (email, name, token) => {
-  const link = `${baseUrl}/api/auth/verify-email/${token}`;
+
+  
+  const link = `${process.env.APP_BASE_URL_BACKEND}/api/auth/verify-email/${token}`;
 
   await transporter.sendMail({
     from: `"BlockSign" <${process.env.EMAIL_USER}>`,
@@ -60,8 +62,10 @@ const sendVerificationEmail = async (email, name, token) => {
 // RECUPERAR CONTRASEÑA
 // ────────────────────────────────────────────────
 const sendPasswordResetEmail = async (email, name, token) => {
-  const link = `${process.env.FLUTTER_DEEP_LINK || 'blocksign://reset-password'}?token=${token}`;
-  // Para web: `${baseUrl}/reset-password?token=${token}`
+
+  // Cambia esto — apunta a la web en lugar de deep link
+  const link = `${process.env.APP_BASE_URL}/reset-password?token=${token}`;
+  // En desarrollo: http://localhost:8080/reset-password?token=xxx
 
   await transporter.sendMail({
     from: `"BlockSign" <${process.env.EMAIL_USER}>`,
