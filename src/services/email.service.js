@@ -64,8 +64,8 @@ const sendVerificationEmail = async (email, name, token) => {
 const sendPasswordResetEmail = async (email, name, token) => {
 
   // Cambia esto — apunta a la web en lugar de deep link
-  const link = `${process.env.APP_BASE_URL}/reset-password?token=${token}`;
-  // En desarrollo: http://localhost:8080/reset-password?token=xxx
+ 
+  const link = `${process.env.APP_BASE_URL}/#/reset-password?token=${token}`;
 
   await transporter.sendMail({
     from: `"BlockSign" <${process.env.EMAIL_USER}>`,
