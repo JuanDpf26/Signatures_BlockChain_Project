@@ -26,7 +26,6 @@ const getProfile = async (req, res) => {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
-    // Stats del usuario
     const stats = await pool.query(
       `SELECT
         COUNT(*) as total_docs,
@@ -74,8 +73,7 @@ const updateProfile = async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE users
-       SET name = $1, phone = $2, updated_at = NOW()
+      `UPDATE users SET name = $1, phone = $2, updated_at = NOW()
        WHERE id = $3
        RETURNING id, name, email, document_id, phone, avatar_url`,
       [name.trim(), phone || null, userId]
@@ -92,7 +90,7 @@ const updateProfile = async (req, res) => {
 };
 
 // ────────────────────────────────────────────────
-// UPLOAD AVATAR
+// UPLOAD AVATAR — Supabase Storage
 // ────────────────────────────────────────────────
 const uploadAvatar = async (req, res) => {
   try {
@@ -104,29 +102,35 @@ const uploadAvatar = async (req, res) => {
 
     const { buffer, mimetype } = req.file;
 
-    // Validar tipo
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowed.includes(mimetype)) {
-      return res.status(400).json({ error: 'Solo se permiten imágenes JPG, PNG o WebP' });
+      return res.status(400).json({ error: 'Solo JPG, PNG o WebP' });
     }
 
-    // Redimensionar y optimizar con sharp (200x200px, calidad 85)
+    // Optimizar con sharp — 200x200 circular ready
     const optimized = await sharp(buffer)
       .resize(200, 200, { fit: 'cover', position: 'center' })
       .jpeg({ quality: 85 })
       .toBuffer();
 
-    const fileName = `avatars/${userId}/avatar.jpg`;
+    const fileName = `${userId}/avatar_${Date.now()}.jpg`;
 
-    // Eliminar avatar anterior si existe
-    await supabase.storage.from('avatars').remove([fileName]);
+    // Eliminar avatar anterior
+    const { data: existing } = await supabase.storage
+      .from('avatars')
+      .list(userId);
+
+    if (existing && existing.length > 0) {
+      const oldFiles = existing.map(f => `${userId}/${f.name}`);
+      await supabase.storage.from('avatars').remove(oldFiles);
+    }
 
     // Subir nuevo avatar
     const { error: storageError } = await supabase.storage
       .from('avatars')
       .upload(fileName, optimized, {
         contentType: 'image/jpeg',
-        upsert: true,
+        upsert: false,
       });
 
     if (storageError) {
@@ -138,7 +142,6 @@ const uploadAvatar = async (req, res) => {
       .from('avatars')
       .getPublicUrl(fileName);
 
-    // Agregar timestamp para evitar caché
     const avatarUrl = `${urlData.publicUrl}?t=${Date.now()}`;
 
     await pool.query(
@@ -153,6 +156,132 @@ const uploadAvatar = async (req, res) => {
   } catch (err) {
     console.error('ERROR UPLOAD AVATAR:', err);
     return res.status(500).json({ error: 'Error al actualizar foto' });
+  }
+};
+
+// ────────────────────────────────────────────────
+// UPLOAD SIGNATURE — Supabase Storage
+// ────────────────────────────────────────────────
+const uploadSignature = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { signatureBase64 } = req.body;
+
+    if (!signatureBase64) {
+      return res.status(400).json({ error: 'Imagen de firma requerida' });
+    }
+
+    // Convertir base64 a buffer
+    const base64Data = signatureBase64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    if (buffer.length > 700 * 1024) {
+      return res.status(400).json({ error: 'La firma es demasiado grande (máx 700KB)' });
+    }
+
+    const fileName = `${userId}/signature_${Date.now()}.png`;
+
+    // Eliminar firma anterior
+    const { data: existing } = await supabase.storage
+      .from('signatures')
+      .list(userId);
+
+    if (existing && existing.length > 0) {
+      const oldFiles = existing.map(f => `${userId}/${f.name}`);
+      await supabase.storage.from('signatures').remove(oldFiles);
+    }
+
+    // Subir nueva firma
+    const { error: storageError } = await supabase.storage
+      .from('signatures')
+      .upload(fileName, buffer, {
+        contentType: 'image/png',
+        upsert: false,
+      });
+
+    if (storageError) {
+      console.error('SIGNATURE STORAGE ERROR:', storageError);
+      return res.status(500).json({ error: 'Error al guardar firma' });
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('signatures')
+      .getPublicUrl(fileName);
+
+    const signatureUrl = `${urlData.publicUrl}?t=${Date.now()}`;
+
+    // Guardar URL en base de datos
+    await pool.query(
+      `UPDATE users SET avatar_url = avatar_url,
+       updated_at = NOW() WHERE id = $1`,
+      [userId]
+    );
+
+    // Guardar en tabla separada o en metadata del usuario
+    await pool.query(
+      `INSERT INTO user_signatures (user_id, signature_url, created_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+       SET signature_url = $2, updated_at = NOW()`,
+      [userId, signatureUrl]
+    );
+
+    return res.json({
+      message: 'Firma guardada exitosamente',
+      signature_url: signatureUrl,
+    });
+  } catch (err) {
+    console.error('ERROR UPLOAD SIGNATURE:', err);
+    return res.status(500).json({ error: 'Error al guardar firma' });
+  }
+};
+
+// ────────────────────────────────────────────────
+// GET SIGNATURE
+// ────────────────────────────────────────────────
+const getSignature = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await pool.query(
+      'SELECT signature_url, created_at FROM user_signatures WHERE user_id = $1',
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No tienes firma guardada' });
+    }
+
+    return res.json({ signature: result.rows[0] });
+  } catch (err) {
+    console.error('ERROR GET SIGNATURE:', err);
+    return res.status(500).json({ error: 'Error al obtener firma' });
+  }
+};
+
+// ────────────────────────────────────────────────
+// DELETE SIGNATURE
+// ────────────────────────────────────────────────
+const deleteSignature = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Eliminar de storage
+    const { data: existing } = await supabase.storage
+      .from('signatures')
+      .list(userId);
+
+    if (existing && existing.length > 0) {
+      const files = existing.map(f => `${userId}/${f.name}`);
+      await supabase.storage.from('signatures').remove(files);
+    }
+
+    await pool.query('DELETE FROM user_signatures WHERE user_id = $1', [userId]);
+
+    return res.json({ message: 'Firma eliminada' });
+  } catch (err) {
+    console.error('ERROR DELETE SIGNATURE:', err);
+    return res.status(500).json({ error: 'Error al eliminar firma' });
   }
 };
 
@@ -172,7 +301,7 @@ const changePassword = async (req, res) => {
         !/[A-Z]/.test(newPassword) ||
         !/[0-9]/.test(newPassword)) {
       return res.status(400).json({
-        error: 'La nueva contraseña debe tener mínimo 8 caracteres, una mayúscula y un número',
+        error: 'La contraseña debe tener mínimo 8 caracteres, una mayúscula y un número',
       });
     }
 
@@ -187,7 +316,6 @@ const changePassword = async (req, res) => {
 
     const user = result.rows[0];
 
-    // Cuentas Google no tienen password
     if (!user.password) {
       return res.status(400).json({
         error: 'Esta cuenta usa Google. No puedes cambiar la contraseña aquí.',
@@ -199,7 +327,6 @@ const changePassword = async (req, res) => {
       return res.status(401).json({ error: 'La contraseña actual es incorrecta' });
     }
 
-    // Verificar que no sea la misma
     const samePassword = await bcrypt.compare(newPassword, user.password);
     if (samePassword) {
       return res.status(400).json({
@@ -208,7 +335,6 @@ const changePassword = async (req, res) => {
     }
 
     const newHash = await bcrypt.hash(newPassword, 12);
-
     await pool.query(
       'UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2',
       [newHash, userId]
@@ -238,7 +364,6 @@ const deleteAccount = async (req, res) => {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
-    // Verificar contraseña si no es cuenta Google
     if (result.rows[0].password) {
       if (!password) {
         return res.status(400).json({ error: 'Ingresa tu contraseña para confirmar' });
@@ -249,7 +374,7 @@ const deleteAccount = async (req, res) => {
       }
     }
 
-    // Eliminar archivos de Supabase Storage
+    // Eliminar documentos de storage
     const docs = await pool.query(
       'SELECT file_url FROM documents WHERE user_id = $1',
       [userId]
@@ -262,10 +387,17 @@ const deleteAccount = async (req, res) => {
       }
     }
 
-    // Eliminar avatar
-    await supabase.storage.from('avatars').remove([`avatars/${userId}/avatar.jpg`]);
+    // Eliminar avatar y firma de storage
+    const { data: avatarFiles } = await supabase.storage.from('avatars').list(userId);
+    if (avatarFiles?.length) {
+      await supabase.storage.from('avatars').remove(avatarFiles.map(f => `${userId}/${f.name}`));
+    }
 
-    // Eliminar usuario (cascade elimina documentos, firmas, audit_log)
+    const { data: sigFiles } = await supabase.storage.from('signatures').list(userId);
+    if (sigFiles?.length) {
+      await supabase.storage.from('signatures').remove(sigFiles.map(f => `${userId}/${f.name}`));
+    }
+
     await pool.query('DELETE FROM users WHERE id = $1', [userId]);
 
     return res.json({ message: 'Cuenta eliminada permanentemente' });
@@ -275,4 +407,13 @@ const deleteAccount = async (req, res) => {
   }
 };
 
-module.exports = { getProfile, updateProfile, uploadAvatar, changePassword, deleteAccount };
+module.exports = {
+  getProfile,
+  updateProfile,
+  uploadAvatar,
+  uploadSignature,
+  getSignature,
+  deleteSignature,
+  changePassword,
+  deleteAccount,
+};

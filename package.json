@@ -12,6 +12,7 @@
   "type": "commonjs",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.93.0",
+    "@google-cloud/storage": "^7.19.0",
     "@supabase/supabase-js": "^2.105.3",
     "axios": "^1.16.0",
     "bcrypt": "^6.0.0",
@@ -22,6 +23,7 @@
     "express-rate-limit": "^8.4.1",
     "firebase-admin": "^13.10.0",
     "google-auth-library": "^10.6.2",
+    "groq-sdk": "^1.2.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.12.0",
