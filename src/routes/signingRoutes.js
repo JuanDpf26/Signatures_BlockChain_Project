@@ -6,7 +6,7 @@ const {
   verifyDocument,
   verifyDocumentPublic,
   revokeSignature,
-} = require('../controllers/Signing.controller');
+} = require('../controllers/signing.controller');
 
 // Ruta pública — sin autenticación (verificar por hash)
 router.get('/public/:hash', verifyDocumentPublic);
