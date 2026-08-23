@@ -2,15 +2,13 @@ const pool = require('../config/db');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 const pdfParse = require('pdf-parse');
+const _pdfParse = pdfParse.default || pdfParse;
 const mammoth = require('mammoth');
 const Groq = require('groq-sdk');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ────────────────────────────────────────────────
-// SANITIZAR NOMBRE DE ARCHIVO
-// ────────────────────────────────────────────────
 const sanitizeFileName = (originalname) => {
   const ext = originalname.split('.').pop().toLowerCase();
   const nameWithoutExt = originalname.slice(0, originalname.lastIndexOf('.'));
@@ -24,9 +22,6 @@ const sanitizeFileName = (originalname) => {
   return `${safe || 'documento'}.${ext}`;
 };
 
-// ────────────────────────────────────────────────
-// DETECTAR CATEGORÍA
-// ────────────────────────────────────────────────
 const detectCategory = (filename) => {
   const name = filename.toLowerCase();
   const rules = [
@@ -47,9 +42,6 @@ const detectCategory = (filename) => {
   return 'Documento';
 };
 
-// ────────────────────────────────────────────────
-// GENERAR TAGS
-// ────────────────────────────────────────────────
 const generateTags = (filename, category) => {
   const tags = new Set([category.toLowerCase()]);
   const name = filename.toLowerCase().replace(/[._-]/g, ' ');
@@ -60,9 +52,6 @@ const generateTags = (filename, category) => {
   return Array.from(tags).slice(0, 6);
 };
 
-// ────────────────────────────────────────────────
-// FORMATEAR FECHA PDF
-// ────────────────────────────────────────────────
 const formatPdfDate = (d) => {
   try {
     if (typeof d === 'string' && d.startsWith('D:')) {
@@ -73,9 +62,6 @@ const formatPdfDate = (d) => {
   } catch { return null; }
 };
 
-// ────────────────────────────────────────────────
-// EXTRAER METADATOS REALES
-// ────────────────────────────────────────────────
 const extractMetadata = async (buffer, mimetype, originalname, size) => {
   const ext = originalname.split('.').pop().toLowerCase();
   const category = detectCategory(originalname);
@@ -93,7 +79,7 @@ const extractMetadata = async (buffer, mimetype, originalname, size) => {
 
   try {
     if (mimetype === 'application/pdf') {
-      const data = await pdfParse(buffer);
+      const data = await _pdfParse(buffer);
       const info = data.info || {};
       return {
         ...base,
@@ -129,13 +115,10 @@ const extractMetadata = async (buffer, mimetype, originalname, size) => {
   }
 };
 
-// ────────────────────────────────────────────────
-// GENERAR DESCRIPCIÓN CON GROQ
-// ────────────────────────────────────────────────
 const generateDescriptionWithGroq = async (docId, metadata) => {
   try {
     if (!process.env.GROQ_API_KEY) {
-      console.log('⚠️ GROQ_API_KEY no configurada — saltando análisis IA');
+      console.log('⚠️ GROQ_API_KEY no configurada');
       return;
     }
 
@@ -158,51 +141,34 @@ Metadatos:
 - Asunto: ${subject || 'no especificado'}
 - Categoría detectada: ${category}
 - Palabras: ${word_count || 0}
-${text_preview ? `- Vista previa del contenido: "${text_preview.slice(0, 300)}"` : ''}
+${text_preview ? `- Vista previa: "${text_preview.slice(0, 300)}"` : ''}
 
 Responde con este JSON exacto:
-{
-  "description": "descripción profesional de máximo 2 oraciones sobre el propósito del documento",
-  "tags": ["tag1", "tag2", "tag3", "tag4"],
-  "category": "categoría más apropiada del documento",
-  "confidentiality": "Público o Interno o Confidencial o Secreto",
-  "summary": "resumen de 3 a 5 oraciones del contenido y propósito del documento"
-}`;
+{"description":"descripción profesional de máximo 2 oraciones","tags":["tag1","tag2","tag3","tag4"],"category":"categoría","confidentiality":"Público o Interno o Confidencial o Secreto","summary":"resumen de 3 a 5 oraciones"}`;
 
     const completion = await groq.chat.completions.create({
       messages: [{ role: 'user', content: prompt }],
-      model: 'llama-3.1-8b-instant',
+      model: 'compound-beta-mini',
       max_tokens: 600,
       temperature: 0.3,
     });
 
     const responseText = completion.choices[0]?.message?.content?.trim();
-    if (!responseText) {
-      console.error('Groq no retornó respuesta');
-      return;
-    }
+    if (!responseText) return;
 
-    // Limpiar markdown si viene
-    const clean = responseText
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
-
+    const clean = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     const aiData = JSON.parse(clean);
 
     await pool.query(
       `UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`,
-      [
-        JSON.stringify({
-          ai_description: aiData.description,
-          ai_tags: aiData.tags,
-          ai_category: aiData.category,
-          ai_confidentiality: aiData.confidentiality,
-          ai_summary: aiData.summary,
-          ai_analyzed_at: new Date().toISOString(),
-        }),
-        docId,
-      ]
+      [JSON.stringify({
+        ai_description: aiData.description,
+        ai_tags: aiData.tags,
+        ai_category: aiData.category,
+        ai_confidentiality: aiData.confidentiality,
+        ai_summary: aiData.summary,
+        ai_analyzed_at: new Date().toISOString(),
+      }), docId]
     );
 
     console.log(`✅ Documento ${docId} analizado por Groq`);
@@ -211,9 +177,6 @@ Responde con este JSON exacto:
   }
 };
 
-// ────────────────────────────────────────────────
-// SUBIR DOCUMENTO
-// ────────────────────────────────────────────────
 const uploadDocument = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo' });
@@ -231,7 +194,6 @@ const uploadDocument = async (req, res) => {
     if (size > 10 * 1024 * 1024)
       return res.status(400).json({ error: 'El archivo no puede superar 10MB' });
 
-    // Nombre seguro para Supabase Storage
     const safeName = sanitizeFileName(originalname);
     const fileName = `${userId}/${Date.now()}_${safeName}`;
 
@@ -255,8 +217,6 @@ const uploadDocument = async (req, res) => {
     );
 
     const doc = result.rows[0];
-
-    // Generar descripción IA en background
     generateDescriptionWithGroq(doc.id, metadata).catch(console.error);
 
     return res.status(201).json({
@@ -269,221 +229,105 @@ const uploadDocument = async (req, res) => {
   }
 };
 
-// ────────────────────────────────────────────────
-// LISTAR DOCUMENTOS CON FILTROS
-// ────────────────────────────────────────────────
 const getDocuments = async (req, res) => {
   try {
     const userId = req.user.id;
     const { search, category, status, ext, date_from, date_to, page = 1, limit = 20 } = req.query;
 
-    let query = `
-      SELECT id, title, file_url, file_hash, status, metadata, created_at, updated_at
-      FROM documents WHERE user_id = $1
-    `;
+    let query = `SELECT id, title, file_url, file_hash, status, metadata, created_at, updated_at
+      FROM documents WHERE user_id = $1`;
     const params = [userId];
     let i = 2;
 
     if (search) {
-      query += ` AND (
-        title ILIKE $${i}
-        OR metadata->>'original_name' ILIKE $${i}
-        OR metadata->>'category' ILIKE $${i}
-        OR metadata->>'ai_category' ILIKE $${i}
-        OR metadata->>'author' ILIKE $${i}
-        OR metadata->>'ai_description' ILIKE $${i}
-        OR metadata->>'ai_summary' ILIKE $${i}
-        OR metadata->>'doc_title' ILIKE $${i}
-        OR metadata->>'subject' ILIKE $${i}
-      )`;
+      query += ` AND (title ILIKE $${i} OR metadata->>'original_name' ILIKE $${i}
+        OR metadata->>'category' ILIKE $${i} OR metadata->>'ai_category' ILIKE $${i}
+        OR metadata->>'author' ILIKE $${i} OR metadata->>'ai_description' ILIKE $${i}
+        OR metadata->>'ai_summary' ILIKE $${i} OR metadata->>'doc_title' ILIKE $${i}
+        OR metadata->>'subject' ILIKE $${i})`;
       params.push(`%${search}%`); i++;
     }
     if (category && category !== 'Todos') {
       query += ` AND (metadata->>'category' = $${i} OR metadata->>'ai_category' = $${i})`;
       params.push(category); i++;
     }
-    if (status && status !== 'Todos') {
-      query += ` AND status = $${i}`;
-      params.push(status); i++;
-    }
-    if (ext && ext !== 'Todos') {
-      query += ` AND metadata->>'extension' = $${i}`;
-      params.push(ext); i++;
-    }
-    if (date_from) {
-      query += ` AND created_at >= $${i}`;
-      params.push(date_from); i++;
-    }
-    if (date_to) {
-      query += ` AND created_at <= $${i}`;
-      params.push(date_to + ' 23:59:59'); i++;
-    }
+    if (status && status !== 'Todos') { query += ` AND status = $${i}`; params.push(status); i++; }
+    if (ext && ext !== 'Todos') { query += ` AND metadata->>'extension' = $${i}`; params.push(ext); i++; }
+    if (date_from) { query += ` AND created_at >= $${i}`; params.push(date_from); i++; }
+    if (date_to) { query += ` AND created_at <= $${i}`; params.push(date_to + ' 23:59:59'); i++; }
 
     const countResult = await pool.query(
-      query.replace(
-        'SELECT id, title, file_url, file_hash, status, metadata, created_at, updated_at',
-        'SELECT COUNT(*)'
-      ),
+      query.replace('SELECT id, title, file_url, file_hash, status, metadata, created_at, updated_at', 'SELECT COUNT(*)'),
       params
     );
     const total = parseInt(countResult.rows[0].count);
-
     query += ` ORDER BY created_at DESC LIMIT $${i} OFFSET $${i + 1}`;
     params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
-
     const result = await pool.query(query, params);
-    return res.json({
-      documents: result.rows,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit)),
-      },
-    });
+    return res.json({ documents: result.rows, pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) } });
   } catch (err) {
     console.error('ERROR GET DOCS:', err);
     return res.status(500).json({ error: 'Error al obtener documentos' });
   }
 };
 
-// ────────────────────────────────────────────────
-// OBTENER DOCUMENTO
-// ────────────────────────────────────────────────
 const getDocument = async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM documents WHERE id = $1 AND user_id = $2',
-      [req.params.id, req.user.id]
-    );
-    if (!result.rows.length)
-      return res.status(404).json({ error: 'Documento no encontrado' });
+    const result = await pool.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
     return res.json({ document: result.rows[0] });
-  } catch (err) {
-    return res.status(500).json({ error: 'Error al obtener documento' });
-  }
+  } catch (err) { return res.status(500).json({ error: 'Error al obtener documento' }); }
 };
 
-// ────────────────────────────────────────────────
-// RE-ANALIZAR CON GROQ
-// ────────────────────────────────────────────────
 const reanalyzeDocument = async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM documents WHERE id = $1 AND user_id = $2',
-      [req.params.id, req.user.id]
-    );
-    if (!result.rows.length)
-      return res.status(404).json({ error: 'Documento no encontrado' });
-
-    generateDescriptionWithGroq(result.rows[0].id, result.rows[0].metadata || {})
-      .catch(console.error);
-
+    const result = await pool.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
+    generateDescriptionWithGroq(result.rows[0].id, result.rows[0].metadata || {}).catch(console.error);
     return res.json({ message: 'Análisis IA iniciado. Listo en unos segundos.' });
-  } catch (err) {
-    return res.status(500).json({ error: 'Error al re-analizar' });
-  }
+  } catch (err) { return res.status(500).json({ error: 'Error al re-analizar' }); }
 };
 
-// ────────────────────────────────────────────────
-// ACTUALIZAR METADATOS
-// ────────────────────────────────────────────────
 const updateDocumentMeta = async (req, res) => {
   try {
     const { id } = req.params;
     const { category, tags, title } = req.body;
-
-    const check = await pool.query(
-      'SELECT id FROM documents WHERE id = $1 AND user_id = $2',
-      [id, req.user.id]
-    );
-    if (!check.rows.length)
-      return res.status(404).json({ error: 'Documento no encontrado' });
-
+    const check = await pool.query('SELECT id FROM documents WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (!check.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
     if (title) await pool.query('UPDATE documents SET title = $1 WHERE id = $2', [title, id]);
-
-    const updates = {
-      manually_edited: true,
-      last_edited_at: new Date().toISOString(),
-    };
+    const updates = { manually_edited: true, last_edited_at: new Date().toISOString() };
     if (category) updates.category = category;
     if (tags) updates.tags = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
-
-    await pool.query(
-      `UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`,
-      [JSON.stringify(updates), id]
-    );
-
+    await pool.query(`UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`, [JSON.stringify(updates), id]);
     const updated = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
     return res.json({ message: 'Documento actualizado', document: updated.rows[0] });
-  } catch (err) {
-    return res.status(500).json({ error: 'Error al actualizar' });
-  }
+  } catch (err) { return res.status(500).json({ error: 'Error al actualizar' }); }
 };
 
-// ────────────────────────────────────────────────
-// ELIMINAR DOCUMENTO
-// ────────────────────────────────────────────────
 const deleteDocument = async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM documents WHERE id = $1 AND user_id = $2',
-      [req.params.id, req.user.id]
-    );
-    if (!result.rows.length)
-      return res.status(404).json({ error: 'Documento no encontrado' });
-
+    const result = await pool.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
     const doc = result.rows[0];
     const urlParts = doc.file_url.split('/storage/v1/object/public/documents/');
-    if (urlParts[1]) {
-      await supabase.storage.from('documents').remove([decodeURIComponent(urlParts[1])]);
-    }
-
+    if (urlParts[1]) await supabase.storage.from('documents').remove([decodeURIComponent(urlParts[1])]);
     await pool.query('DELETE FROM documents WHERE id = $1', [req.params.id]);
     return res.json({ message: 'Documento eliminado' });
-  } catch (err) {
-    return res.status(500).json({ error: 'Error al eliminar documento' });
-  }
+  } catch (err) { return res.status(500).json({ error: 'Error al eliminar documento' }); }
 };
 
-// ────────────────────────────────────────────────
-// ESTADÍSTICAS
-// ────────────────────────────────────────────────
 const getStats = async (req, res) => {
   try {
     const s = (await pool.query(
-      `SELECT
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE status = 'signed') as signed,
-        COUNT(*) FILTER (WHERE status = 'verified') as verified,
-        COUNT(*) FILTER (WHERE status = 'pending') as pending,
-        COUNT(*) FILTER (WHERE metadata->>'extension' = 'pdf') as pdfs,
-        COUNT(*) FILTER (WHERE metadata->>'extension' IN ('doc','docx')) as words,
-        COALESCE(SUM((metadata->>'size_bytes')::bigint), 0) as total_size
-       FROM documents WHERE user_id = $1`,
-      [req.user.id]
+      `SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='signed') as signed,
+       COUNT(*) FILTER (WHERE status='verified') as verified, COUNT(*) FILTER (WHERE status='pending') as pending,
+       COUNT(*) FILTER (WHERE metadata->>'extension'='pdf') as pdfs,
+       COUNT(*) FILTER (WHERE metadata->>'extension' IN ('doc','docx')) as words,
+       COALESCE(SUM((metadata->>'size_bytes')::bigint),0) as total_size
+       FROM documents WHERE user_id = $1`, [req.user.id]
     )).rows[0];
-
-    return res.json({
-      total: parseInt(s.total),
-      signed: parseInt(s.signed),
-      verified: parseInt(s.verified),
-      pending: parseInt(s.pending),
-      pdfs: parseInt(s.pdfs),
-      words: parseInt(s.words),
-      total_size_mb: (parseInt(s.total_size) / (1024 * 1024)).toFixed(2),
-    });
-  } catch (err) {
-    return res.status(500).json({ error: 'Error al obtener estadísticas' });
-  }
+    return res.json({ total: parseInt(s.total), signed: parseInt(s.signed), verified: parseInt(s.verified), pending: parseInt(s.pending), pdfs: parseInt(s.pdfs), words: parseInt(s.words), total_size_mb: (parseInt(s.total_size)/(1024*1024)).toFixed(2) });
+  } catch (err) { return res.status(500).json({ error: 'Error al obtener estadísticas' }); }
 };
 
-module.exports = {
-  uploadDocument,
-  getDocuments,
-  getDocument,
-  reanalyzeDocument,
-  updateDocumentMeta,
-  deleteDocument,
-  getStats,
-};
+module.exports = { uploadDocument, getDocuments, getDocument, reanalyzeDocument, updateDocumentMeta, deleteDocument, getStats };

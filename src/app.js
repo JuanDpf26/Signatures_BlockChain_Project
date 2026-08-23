@@ -8,10 +8,15 @@ const authRoutes = require('./routes/authRoutes');
 const documentRoutes = require('./routes/documentRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const signatureRoutes = require('./routes/signatureRoutes');
-const { initFirebase } = require('./config/firebase');
+const signingRoutes = require('./routes/signingRoutes');
 
 // Inicializar Firebase
+const { initFirebase } = require('./config/firebase');
 initFirebase();
+
+// Inicializar Blockchain
+const { initBlockchain } = require('./services/blockchain.service');
+initBlockchain();
 
 const app = express();
 
@@ -33,6 +38,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/signatures', signatureRoutes);
+app.use('/api/signing', signingRoutes);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

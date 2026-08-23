@@ -6,6 +6,7 @@ const {
   uploadDocument,
   getDocuments,
   getDocument,
+  reanalyzeDocument,
   updateDocumentMeta,
   deleteDocument,
   getStats,
@@ -32,6 +33,7 @@ router.get('/stats', getStats);
 router.post('/upload', upload.single('file'), uploadDocument);
 router.get('/', getDocuments);
 router.get('/:id', getDocument);
+router.post('/:id/reanalyze', reanalyzeDocument);
 router.patch('/:id', updateDocumentMeta);
 router.delete('/:id', deleteDocument);
 
