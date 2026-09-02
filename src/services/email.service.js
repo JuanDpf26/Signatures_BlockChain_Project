@@ -1,20 +1,8 @@
-const nodemailer = require('nodemailer');
 const { Resend } = require('resend');
+
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-  family: 4,  // ← fuerza IPv4
-});
+const FROM_EMAIL = 'BlockSign <onboarding@resend.dev>';
 
 // ────────────────────────────────────────────────
 // VERIFICACIÓN DE EMAIL
@@ -22,8 +10,8 @@ const transporter = nodemailer.createTransport({
 const sendVerificationEmail = async (email, name, token) => {
   const link = `${process.env.APP_BASE_URL_BACKEND}/api/auth/verify-email/${token}`;
 
-  await transporter.sendMail({
-    from: `"BlockSign" <${process.env.EMAIL_USER}>`,
+  await resend.emails.send({
+    from: FROM_EMAIL,
     to: email,
     subject: 'Verifica tu cuenta en BlockSign',
     html: `
@@ -49,7 +37,7 @@ const sendVerificationEmail = async (email, name, token) => {
           </p>
           <hr style="border: none; border-top: 1px solid #2a2a4a; margin: 24px 0;">
           <p style="color: #4b5563; font-size: 12px; text-align: center;">
-            BlockSign · Universidad Manuela Beltrán · Ingeniería de Software 2025
+            BlockSign · Universidad Manuela Beltrán · Ingeniería de Software 2026
           </p>
         </div>
       </body>
@@ -64,8 +52,8 @@ const sendVerificationEmail = async (email, name, token) => {
 const sendPasswordResetEmail = async (email, name, token) => {
   const link = `${process.env.APP_BASE_URL}/#/reset-password?token=${token}`;
 
-  await transporter.sendMail({
-    from: `"BlockSign" <${process.env.EMAIL_USER}>`,
+  await resend.emails.send({
+    from: FROM_EMAIL,
     to: email,
     subject: 'Recupera tu contraseña de BlockSign',
     html: `
@@ -92,7 +80,7 @@ const sendPasswordResetEmail = async (email, name, token) => {
           </div>
           <hr style="border: none; border-top: 1px solid #2a2a4a; margin: 24px 0;">
           <p style="color: #4b5563; font-size: 12px; text-align: center;">
-            BlockSign · Universidad Manuela Beltrán · Ingeniería de Software 2025
+            BlockSign · Universidad Manuela Beltrán · Ingeniería de Software 2026
           </p>
         </div>
       </body>
