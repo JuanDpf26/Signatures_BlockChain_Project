@@ -5,7 +5,7 @@ const pool = require('../config/db');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/email.service');
 const { verifyGoogleToken } = require('../services/google.service');
 
-// ────────────────────────────────────────────────
+// holaaa────────────────────────────────────────────────
 // HELPERS
 // ────────────────────────────────────────────────
 const generateToken = (userId) =>
