@@ -1,5 +1,3 @@
-const nodemailer = require('nodemailer');
-
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
@@ -11,6 +9,7 @@ const transporter = nodemailer.createTransport({
   tls: {
     rejectUnauthorized: false,
   },
+  family: 4,  // ← fuerza IPv4
 });
 
 // ────────────────────────────────────────────────
