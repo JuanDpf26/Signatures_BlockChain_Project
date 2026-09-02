@@ -1,8 +1,19 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  host: 'smtp-relay.brevo.com',
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.BREVO_SMTP_USER,
+    pass: process.env.BREVO_SMTP_PASS,
+  },
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
 
-const FROM_EMAIL = 'BlockSign <onboarding@resend.dev>';
+const FROM_EMAIL = `"BlockSign" <${process.env.BREVO_SMTP_USER}>`;
 
 // ────────────────────────────────────────────────
 // VERIFICACIÓN DE EMAIL
@@ -10,7 +21,7 @@ const FROM_EMAIL = 'BlockSign <onboarding@resend.dev>';
 const sendVerificationEmail = async (email, name, token) => {
   const link = `${process.env.APP_BASE_URL_BACKEND}/api/auth/verify-email/${token}`;
 
-  await resend.emails.send({
+  await transporter.sendMail({
     from: FROM_EMAIL,
     to: email,
     subject: 'Verifica tu cuenta en BlockSign',
@@ -20,12 +31,12 @@ const sendVerificationEmail = async (email, name, token) => {
       <body style="font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #fff; margin: 0; padding: 20px;">
         <div style="max-width: 560px; margin: 0 auto; background: #1a1a2e; border-radius: 16px; padding: 40px; border: 1px solid #2a2a4a;">
           <div style="text-align: center; margin-bottom: 32px;">
-            <h1 style="color: #6366f1; font-size: 28px; margin: 0; letter-spacing: -1px;">🔐 BlockSign</h1>
+            <h1 style="color: #6366f1; font-size: 28px; margin: 0;">🔐 BlockSign</h1>
             <p style="color: #9ca3af; margin-top: 8px; font-size: 14px;">Sistema de Firma Digital con Blockchain</p>
           </div>
           <h2 style="color: #e5e7eb; font-size: 22px; margin-bottom: 12px;">Hola, ${name} 👋</h2>
           <p style="color: #9ca3af; line-height: 1.6; margin-bottom: 24px;">
-            Gracias por registrarte en BlockSign. Para activar tu cuenta y comenzar a firmar documentos de forma segura, verifica tu correo electrónico.
+            Gracias por registrarte en BlockSign. Para activar tu cuenta verifica tu correo electrónico.
           </p>
           <div style="text-align: center; margin: 32px 0;">
             <a href="${link}" style="background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 16px 40px; border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 16px; display: inline-block;">
@@ -33,11 +44,11 @@ const sendVerificationEmail = async (email, name, token) => {
             </a>
           </div>
           <p style="color: #6b7280; font-size: 13px; line-height: 1.6;">
-            Este enlace expira en <strong style="color: #9ca3af;">24 horas</strong>. Si no creaste esta cuenta, puedes ignorar este mensaje.
+            Este enlace expira en <strong style="color: #9ca3af;">24 horas</strong>. Si no creaste esta cuenta, ignora este mensaje.
           </p>
           <hr style="border: none; border-top: 1px solid #2a2a4a; margin: 24px 0;">
           <p style="color: #4b5563; font-size: 12px; text-align: center;">
-            BlockSign · Universidad Manuela Beltrán · Ingeniería de Software 2026
+            BlockSign · Universidad Manuela Beltrán · IS25133 · 2026
           </p>
         </div>
       </body>
@@ -52,7 +63,7 @@ const sendVerificationEmail = async (email, name, token) => {
 const sendPasswordResetEmail = async (email, name, token) => {
   const link = `${process.env.APP_BASE_URL}/#/reset-password?token=${token}`;
 
-  await resend.emails.send({
+  await transporter.sendMail({
     from: FROM_EMAIL,
     to: email,
     subject: 'Recupera tu contraseña de BlockSign',
@@ -62,7 +73,7 @@ const sendPasswordResetEmail = async (email, name, token) => {
       <body style="font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #fff; margin: 0; padding: 20px;">
         <div style="max-width: 560px; margin: 0 auto; background: #1a1a2e; border-radius: 16px; padding: 40px; border: 1px solid #2a2a4a;">
           <div style="text-align: center; margin-bottom: 32px;">
-            <h1 style="color: #6366f1; font-size: 28px; margin: 0; letter-spacing: -1px;">🔐 BlockSign</h1>
+            <h1 style="color: #6366f1; font-size: 28px; margin: 0;">🔐 BlockSign</h1>
           </div>
           <h2 style="color: #e5e7eb; font-size: 22px; margin-bottom: 12px;">Recuperar contraseña</h2>
           <p style="color: #9ca3af; line-height: 1.6; margin-bottom: 24px;">
@@ -80,7 +91,7 @@ const sendPasswordResetEmail = async (email, name, token) => {
           </div>
           <hr style="border: none; border-top: 1px solid #2a2a4a; margin: 24px 0;">
           <p style="color: #4b5563; font-size: 12px; text-align: center;">
-            BlockSign · Universidad Manuela Beltrán · Ingeniería de Software 2026
+            BlockSign · Universidad Manuela Beltrán · IS25133 · 2026
           </p>
         </div>
       </body>
