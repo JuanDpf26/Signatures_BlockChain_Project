@@ -1,8 +1,7 @@
 const pool = require('../config/db');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
-const pdfParse = require('pdf-parse');
-const _pdfParse = pdfParse.default || pdfParse;
+const pdfParseLib = require('pdf-parse');
 const mammoth = require('mammoth');
 const Groq = require('groq-sdk');
 
@@ -62,6 +61,30 @@ const formatPdfDate = (d) => {
   } catch { return null; }
 };
 
+// pdf-parse v2 (la que instala package.json) exporta la clase PDFParse;
+// la v1 exportaba una función. Se soportan ambas.
+const parsePdf = async (buffer) => {
+  if (typeof pdfParseLib.PDFParse === 'function') {
+    const parser = new pdfParseLib.PDFParse({ data: buffer });
+    try {
+      const textResult = await parser.getText();
+      let info = {};
+      let version = null;
+      try {
+        const infoResult = await parser.getInfo();
+        info = infoResult.info || {};
+        version = info.PDFFormatVersion || null;
+      } catch (_) { /* sin metadatos internos */ }
+      const text = (textResult.text || '').replace(/-- \d+ of \d+ --/g, '').trim();
+      return { text, numpages: textResult.total || 0, info, version };
+    } finally {
+      if (typeof parser.destroy === 'function') await parser.destroy().catch(() => {});
+    }
+  }
+  const fn = typeof pdfParseLib === 'function' ? pdfParseLib : pdfParseLib.default;
+  return fn(buffer);
+};
+
 const extractMetadata = async (buffer, mimetype, originalname, size) => {
   const ext = originalname.split('.').pop().toLowerCase();
   const category = detectCategory(originalname);
@@ -79,7 +102,7 @@ const extractMetadata = async (buffer, mimetype, originalname, size) => {
 
   try {
     if (mimetype === 'application/pdf') {
-      const data = await _pdfParse(buffer);
+      const data = await parsePdf(buffer);
       const info = data.info || {};
       return {
         ...base,
@@ -115,20 +138,57 @@ const extractMetadata = async (buffer, mimetype, originalname, size) => {
   }
 };
 
+// Modelos a probar en orden. Se puede fijar uno con GROQ_MODEL en el .env.
+// (El antiguo "compound-beta-mini" fue retirado/renombrado por Groq.)
+const GROQ_MODELS = [
+  process.env.GROQ_MODEL,
+  'llama-3.3-70b-versatile',
+  'openai/gpt-oss-20b',
+  'llama-3.1-8b-instant',
+].filter(Boolean);
+
+// Extrae el primer objeto JSON de la respuesta aunque venga con texto o ```json
+const parseJsonLoose = (text) => {
+  const clean = String(text || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+  try { return JSON.parse(clean); } catch (_) { /* sigue */ }
+  const start = clean.indexOf('{');
+  const end = clean.lastIndexOf('}');
+  if (start >= 0 && end > start) return JSON.parse(clean.slice(start, end + 1));
+  throw new Error('La IA no devolvió JSON válido');
+};
+
+const groqErrorCode = (err) => err?.error?.error?.code || err?.error?.code || err?.code || '';
+
+const explainGroqError = (err) => {
+  const code = groqErrorCode(err);
+  if (err?.status === 401 || code === 'invalid_api_key')
+    return 'GROQ_API_KEY inválida o revocada. Crea una nueva en https://console.groq.com/keys y ponla en el .env (las claves publicadas en GitHub se revocan solas).';
+  if (err?.status === 429) return 'Límite de uso de Groq alcanzado; intenta de nuevo en unos minutos.';
+  if (['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes(err?.cause?.code || err?.code))
+    return 'No hay conexión con api.groq.com (red o firewall).';
+  return err?.message || String(err);
+};
+
+const isModelError = (err) => {
+  const code = groqErrorCode(err);
+  return ['model_decommissioned', 'model_not_found', 'model_not_active'].includes(code)
+    || (err?.status === 404)
+    || /model/i.test(err?.message || '') && [400, 404].includes(err?.status);
+};
+
 const generateDescriptionWithGroq = async (docId, metadata) => {
-  try {
-    if (!process.env.GROQ_API_KEY) {
-      console.log('⚠️ GROQ_API_KEY no configurada');
-      return;
-    }
+  if (!process.env.GROQ_API_KEY) {
+    console.log('⚠️ [IA] GROQ_API_KEY no configurada en el .env: no se analizan documentos');
+    return;
+  }
 
-    const {
-      original_name, extension, size_mb, pages,
-      author, doc_title, subject, category,
-      word_count, text_preview,
-    } = metadata;
+  const {
+    original_name, extension, size_mb, pages,
+    author, doc_title, subject, category,
+    word_count, text_preview,
+  } = metadata;
 
-    const prompt = `Eres un experto en gestión documental para BlockSign, sistema de firma digital con blockchain.
+  const prompt = `Eres un experto en gestión documental para BlockSign, sistema de firma digital con blockchain.
 Analiza los metadatos de este documento y responde ÚNICAMENTE con JSON válido, sin markdown, sin texto adicional.
 
 Metadatos:
@@ -146,35 +206,51 @@ ${text_preview ? `- Vista previa: "${text_preview.slice(0, 300)}"` : ''}
 Responde con este JSON exacto:
 {"description":"descripción profesional de máximo 2 oraciones","tags":["tag1","tag2","tag3","tag4"],"category":"categoría","confidentiality":"Público o Interno o Confidencial o Secreto","summary":"resumen de 3 a 5 oraciones"}`;
 
-    const completion = await groq.chat.completions.create({
-      messages: [{ role: 'user', content: prompt }],
-      model: 'compound-beta-mini',
-      max_tokens: 600,
-      temperature: 0.3,
-    });
+  let lastErr;
+  for (const model of GROQ_MODELS) {
+    try {
+      const completion = await groq.chat.completions.create({
+        messages: [{ role: 'user', content: prompt }],
+        model,
+        max_tokens: 700,
+        temperature: 0.3,
+        response_format: { type: 'json_object' },
+      });
 
-    const responseText = completion.choices[0]?.message?.content?.trim();
-    if (!responseText) return;
+      const aiData = parseJsonLoose(completion.choices[0]?.message?.content);
 
-    const clean = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const aiData = JSON.parse(clean);
+      await pool.query(
+        `UPDATE documents SET metadata = (metadata - 'ai_error') || $1::jsonb WHERE id = $2`,
+        [JSON.stringify({
+          ai_description: aiData.description || null,
+          ai_tags: Array.isArray(aiData.tags) ? aiData.tags.slice(0, 6) : [],
+          ai_category: aiData.category || category,
+          ai_confidentiality: aiData.confidentiality || null,
+          ai_summary: aiData.summary || null,
+          ai_model: model,
+          ai_analyzed_at: new Date().toISOString(),
+        }), docId]
+      );
 
-    await pool.query(
-      `UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`,
-      [JSON.stringify({
-        ai_description: aiData.description,
-        ai_tags: aiData.tags,
-        ai_category: aiData.category,
-        ai_confidentiality: aiData.confidentiality,
-        ai_summary: aiData.summary,
-        ai_analyzed_at: new Date().toISOString(),
-      }), docId]
-    );
-
-    console.log(`✅ Documento ${docId} analizado por Groq`);
-  } catch (err) {
-    console.error('ERROR GROQ:', err.message);
+      console.log(`✅ [IA] Documento ${docId} analizado con ${model}`);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (isModelError(err)) {
+        console.warn(`⚠️ [IA] Modelo ${model} no disponible (${groqErrorCode(err) || err.status}); probando el siguiente…`);
+        continue;
+      }
+      break; // clave inválida, red, límite, JSON…: no sirve cambiar de modelo
+    }
   }
+
+  const reason = explainGroqError(lastErr);
+  console.error(`❌ [IA] No se pudo analizar el documento ${docId}: ${reason}`);
+  // Se guarda el motivo para poder verlo en los metadatos del documento
+  await pool.query(
+    `UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`,
+    [JSON.stringify({ ai_error: reason, ai_error_at: new Date().toISOString() }), docId]
+  ).catch(() => {});
 };
 
 const uploadDocument = async (req, res) => {
