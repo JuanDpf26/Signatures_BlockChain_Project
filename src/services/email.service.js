@@ -66,15 +66,15 @@ const escapeHtml = (str = '') =>
     .replace(/'/g, '&#39;');
 
 // Envío genérico: intenta 465 y, si es un problema de red, reintenta por 587
-const sendEmail = async ({ to, subject, html, link }) => {
-  console.log(`[email] Enlace para ${to}: ${link}`); // siempre visible, aunque el correo falle
+const sendEmail = async ({ to, subject, html, text, link }) => {
+  if (link) console.log(`[email] Enlace para ${to}: ${link}`); // siempre visible, aunque el correo falle
   const problem = configProblem();
   if (problem) {
     console.error(`[email] ${problem}`);
     throw new Error(problem);
   }
   const { user } = cfg();
-  const message = { from: `"BlockSign" <${user}>`, to, subject, html };
+  const message = { from: `"BlockSign" <${user}>`, to, subject, html, text };
 
   let lastErr;
   for (const port of [465, 587]) {
@@ -120,6 +120,143 @@ const verifyEmailTransport = async () => {
 };
 
 // ────────────────────────────────────────────────
+// PLANTILLA BASE
+// Tablas + estilos en línea: así se ve bien en Gmail, Outlook y el celular.
+// Colores de la app: azul #1A73E8 y cian #06B6D4.
+// ────────────────────────────────────────────────
+const C = {
+  primary: '#1A73E8',
+  cyan: '#06B6D4',
+  text: '#202124',
+  hint: '#5F6368',
+  border: '#E3E8EF',
+  page: '#F4F6FA',
+  success: '#16A34A',
+  warning: '#D97706',
+  danger: '#DC2626',
+};
+const FONT = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+const button = (href, label, color = C.primary) => `
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:28px auto;">
+    <tr><td align="center" bgcolor="${color}" style="border-radius:10px;">
+      <a href="${href}" target="_blank"
+         style="display:inline-block;padding:15px 36px;font-family:${FONT};font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;">
+        ${label}
+      </a>
+    </td></tr>
+  </table>`;
+
+const callout = (html, color = C.primary, icon = 'ℹ️') => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;">
+    <tr><td style="background:${color}0F;border:1px solid ${color}33;border-left:4px solid ${color};border-radius:10px;padding:14px 16px;font-family:${FONT};font-size:13px;line-height:1.6;color:${C.text};">
+      <span style="font-size:15px;">${icon}</span>&nbsp; ${html}
+    </td></tr>
+  </table>`;
+
+// Lista de pasos numerados (1, 2, 3…)
+const steps = (items) => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 4px;">
+    ${items
+      .map(
+        (t, i) => `
+      <tr>
+        <td width="34" valign="top" style="padding:6px 0;">
+          <div style="width:26px;height:26px;line-height:26px;border-radius:13px;background:${C.primary}14;color:${C.primary};font-family:${FONT};font-size:13px;font-weight:800;text-align:center;">${i + 1}</div>
+        </td>
+        <td valign="top" style="padding:8px 0 6px 8px;font-family:${FONT};font-size:14px;line-height:1.5;color:${C.text};">${t}</td>
+      </tr>`
+      )
+      .join('')}
+  </table>`;
+
+// Tabla etiqueta / valor (datos de la firma, etc.)
+const dataTable = (rows) => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0;border:1px solid ${C.border};border-radius:10px;border-collapse:separate;">
+    ${rows
+      .map(
+        ([k, v, mono], i) => `
+      <tr>
+        <td style="padding:11px 14px;${i ? `border-top:1px solid ${C.border};` : ''}font-family:${FONT};font-size:12px;font-weight:600;color:${C.hint};white-space:nowrap;" valign="top">${k}</td>
+        <td style="padding:11px 14px;${i ? `border-top:1px solid ${C.border};` : ''}font-family:${mono ? "Consolas, 'Courier New', monospace" : FONT};font-size:${mono ? 12 : 13}px;font-weight:600;color:${C.text};word-break:break-all;" align="right">${v}</td>
+      </tr>`
+      )
+      .join('')}
+  </table>`;
+
+const fallbackLink = (link) => `
+  <p style="margin:0;font-family:${FONT};font-size:12px;line-height:1.6;color:${C.hint};">
+    ¿El botón no funciona? Copia este enlace en tu navegador:<br>
+    <a href="${link}" style="color:${C.primary};word-break:break-all;">${link}</a>
+  </p>`;
+
+/**
+ * Arma el correo completo.
+ * @param preheader texto corto que Gmail muestra junto al asunto
+ * @param accent    color de la franja superior e ícono
+ */
+const layout = ({ preheader, accent = C.primary, icon = '🔐', eyebrow, title, body }) => `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light only">
+  <title>${title}</title>
+  <style>
+    @media (max-width: 480px) {
+      .pad { padding: 28px 22px 8px !important; }
+      .padb { padding: 8px 22px 26px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:${C.page};-webkit-text-size-adjust:100%;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${preheader}&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C.page}">
+    <tr><td align="center" style="padding:32px 14px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:580px;">
+
+        <!-- Marca -->
+        <tr><td align="center" style="padding-bottom:20px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td bgcolor="${C.primary}" style="width:38px;height:38px;border-radius:10px;text-align:center;font-size:19px;line-height:38px;">⛓️</td>
+            <td style="padding-left:10px;font-family:${FONT};font-size:21px;font-weight:800;color:${C.text};letter-spacing:-0.3px;">Block<span style="color:${C.primary};">Sign</span></td>
+          </tr></table>
+        </td></tr>
+
+        <!-- Tarjeta -->
+        <tr><td bgcolor="#ffffff" style="border-radius:16px;border:1px solid ${C.border};overflow:hidden;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr><td style="height:5px;line-height:5px;font-size:0;background:${accent};background-image:linear-gradient(90deg, ${accent}, ${C.cyan});">&nbsp;</td></tr>
+            <tr><td style="padding:36px 36px 8px;" class="pad">
+              <div style="width:56px;height:56px;line-height:56px;border-radius:16px;background:${accent}14;text-align:center;font-size:28px;margin-bottom:18px;">${icon}</div>
+              ${eyebrow ? `<p style="margin:0 0 6px;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${accent};">${eyebrow}</p>` : ''}
+              <h1 style="margin:0 0 14px;font-family:${FONT};font-size:24px;line-height:1.3;font-weight:800;color:${C.text};">${title}</h1>
+              ${body}
+            </td></tr>
+            <tr><td style="padding:8px 36px 32px;" class="padb"></td></tr>
+          </table>
+        </td></tr>
+
+        <!-- Pie -->
+        <tr><td align="center" style="padding:22px 20px 0;font-family:${FONT};font-size:12px;line-height:1.7;color:#8A919C;">
+          Firma digital con huella SHA-256 y registro en Ethereum (Sepolia)<br>
+          BlockSign · Universidad Manuela Beltrán · Proyecto de grado 2026<br>
+          <span style="color:#A9AFB8;">Este es un correo automático, no es necesario responderlo.</span>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+const p = (html, extra = '') =>
+  `<p style="margin:0 0 14px;font-family:${FONT};font-size:15px;line-height:1.65;color:#3C4043;${extra}">${html}</p>`;
+
+const fmtDate = (d = new Date()) =>
+  new Date(d).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'long', timeStyle: 'short' });
+
+// ────────────────────────────────────────────────
 // VERIFICACIÓN DE EMAIL
 // ────────────────────────────────────────────────
 const sendVerificationEmail = async (email, name, token) => {
@@ -128,41 +265,55 @@ const sendVerificationEmail = async (email, name, token) => {
 
   return sendEmail({
     to: email,
-    subject: 'Verifica tu cuenta en BlockSign',
+    subject: 'Confirma tu correo para activar BlockSign',
     link,
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <body style="font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #fff; margin: 0; padding: 20px;">
-        <div style="max-width: 560px; margin: 0 auto; background: #1a1a2e; border-radius: 16px; padding: 40px; border: 1px solid #2a2a4a;">
-          <div style="text-align: center; margin-bottom: 32px;">
-            <h1 style="color: #6366f1; font-size: 28px; margin: 0;">🔐 BlockSign</h1>
-            <p style="color: #9ca3af; margin-top: 8px; font-size: 14px;">Sistema de Firma Digital con Blockchain</p>
-          </div>
-          <h2 style="color: #e5e7eb; font-size: 22px; margin-bottom: 12px;">Hola, ${safeName} 👋</h2>
-          <p style="color: #9ca3af; line-height: 1.6; margin-bottom: 24px;">
-            Gracias por registrarte en BlockSign. Para activar tu cuenta verifica tu correo electrónico.
-          </p>
-          <div style="text-align: center; margin: 32px 0;">
-            <a href="${link}" style="background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 16px 40px; border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 16px; display: inline-block;">
-              Verificar mi cuenta
-            </a>
-          </div>
-          <p style="color: #6b7280; font-size: 13px; line-height: 1.6;">
-            Si el botón no funciona, copia este enlace en tu navegador:<br>
-            <span style="color: #9ca3af; word-break: break-all;">${link}</span>
-          </p>
-          <p style="color: #6b7280; font-size: 13px; line-height: 1.6;">
-            Este enlace expira en <strong style="color: #9ca3af;">24 horas</strong>. Si no creaste esta cuenta, ignora este mensaje.
-          </p>
-          <hr style="border: none; border-top: 1px solid #2a2a4a; margin: 24px 0;">
-          <p style="color: #4b5563; font-size: 12px; text-align: center;">
-            BlockSign · Universidad Manuela Beltrán · IS25133 · 2026
-          </p>
-        </div>
-      </body>
-      </html>
-    `,
+    text: `Hola ${name}:\n\nConfirma tu correo para activar tu cuenta de BlockSign:\n${link}\n\nEl enlace vence en 24 horas. Si no creaste esta cuenta, ignora este mensaje.`,
+    html: layout({
+      preheader: 'Un clic y tu cuenta queda lista para firmar documentos.',
+      icon: '✉️',
+      eyebrow: 'Activa tu cuenta',
+      title: `¡Hola, ${safeName}! Confirma tu correo`,
+      body: `
+        ${p('Gracias por registrarte en <strong>BlockSign</strong>. Solo falta confirmar que este correo es tuyo para activar tu cuenta.')}
+        ${button(link, 'Confirmar mi correo')}
+        ${p('<strong>Lo que podrás hacer:</strong>', 'margin-bottom:4px;')}
+        ${steps([
+          'Subir tus documentos y obtener un <strong>análisis automático con IA</strong>.',
+          'Firmarlos con tu firma manuscrita digital.',
+          'Registrar cada firma en <strong>blockchain</strong> para que nadie pueda alterarla.',
+        ])}
+        ${callout('Este enlace vence en <strong>24 horas</strong>. Si no creaste esta cuenta, ignora este correo: no se activará.', C.warning, '⏳')}
+        ${fallbackLink(link)}`,
+    }),
+  });
+};
+
+// ────────────────────────────────────────────────
+// BIENVENIDA (después de verificar)
+// ────────────────────────────────────────────────
+const sendWelcomeEmail = async (email, name) => {
+  const link = `${cfg().frontend}/#/login`;
+  const safeName = escapeHtml(name);
+  return sendEmail({
+    to: email,
+    subject: '¡Tu cuenta de BlockSign está activa!',
+    text: `Hola ${name}:\n\nTu cuenta de BlockSign ya está activa. Ingresa en ${link}\n\nPrimeros pasos: crea tu firma en Perfil, sube un documento y fírmalo.`,
+    html: layout({
+      preheader: 'Ya puedes subir, analizar y firmar tus documentos.',
+      accent: C.success,
+      icon: '🎉',
+      eyebrow: 'Cuenta activada',
+      title: `¡Bienvenido a BlockSign, ${safeName}!`,
+      body: `
+        ${p('Tu correo quedó verificado y tu cuenta ya está activa. Así empiezas en menos de 2 minutos:')}
+        ${steps([
+          '<strong>Crea tu firma</strong> en <em>Perfil → Mi firma</em> (la dibujas una sola vez).',
+          '<strong>Sube un documento</strong> PDF o Word: la IA lo resume y lo clasifica.',
+          '<strong>Fírmalo</strong> y mira en vivo cómo se registra en la blockchain.',
+          '<strong>Verifica</strong> cualquier archivo cuando quieras para comprobar que no fue modificado.',
+        ])}
+        ${button(link, 'Ingresar a BlockSign', C.success)}`,
+    }),
   });
 };
 
@@ -175,43 +326,97 @@ const sendPasswordResetEmail = async (email, name, token) => {
 
   return sendEmail({
     to: email,
-    subject: 'Recupera tu contraseña de BlockSign',
+    subject: 'Restablece tu contraseña de BlockSign',
     link,
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <body style="font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #fff; margin: 0; padding: 20px;">
-        <div style="max-width: 560px; margin: 0 auto; background: #1a1a2e; border-radius: 16px; padding: 40px; border: 1px solid #2a2a4a;">
-          <div style="text-align: center; margin-bottom: 32px;">
-            <h1 style="color: #6366f1; font-size: 28px; margin: 0;">🔐 BlockSign</h1>
-          </div>
-          <h2 style="color: #e5e7eb; font-size: 22px; margin-bottom: 12px;">Recuperar contraseña</h2>
-          <p style="color: #9ca3af; line-height: 1.6; margin-bottom: 24px;">
-            Hola <strong style="color: #e5e7eb;">${safeName}</strong>, recibimos una solicitud para restablecer tu contraseña.
-          </p>
-          <div style="text-align: center; margin: 32px 0;">
-            <a href="${link}" style="background: linear-gradient(135deg, #f59e0b, #ef4444); color: white; padding: 16px 40px; border-radius: 12px; text-decoration: none; font-weight: 700; font-size: 16px; display: inline-block;">
-              Restablecer contraseña
-            </a>
-          </div>
-          <p style="color: #6b7280; font-size: 13px; line-height: 1.6;">
-            Si el botón no funciona, copia este enlace en tu navegador:<br>
-            <span style="color: #9ca3af; word-break: break-all;">${link}</span>
-          </p>
-          <div style="background: #111827; border-radius: 8px; padding: 16px; margin-top: 16px;">
-            <p style="color: #6b7280; font-size: 13px; margin: 0; line-height: 1.6;">
-              ⚠️ Este enlace <strong style="color: #9ca3af;">expira en 1 hora</strong>. Si no solicitaste este cambio, ignora este correo.
-            </p>
-          </div>
-          <hr style="border: none; border-top: 1px solid #2a2a4a; margin: 24px 0;">
-          <p style="color: #4b5563; font-size: 12px; text-align: center;">
-            BlockSign · Universidad Manuela Beltrán · IS25133 · 2026
-          </p>
-        </div>
-      </body>
-      </html>
-    `,
+    text: `Hola ${name}:\n\nRecibimos una solicitud para restablecer tu contraseña. Crea una nueva aquí:\n${link}\n\nEl enlace vence en 1 hora. Si no fuiste tú, ignora este correo: tu contraseña no cambiará.`,
+    html: layout({
+      preheader: 'Crea una nueva contraseña. El enlace vence en 1 hora.',
+      accent: C.warning,
+      icon: '🔑',
+      eyebrow: 'Seguridad de la cuenta',
+      title: 'Restablece tu contraseña',
+      body: `
+        ${p(`Hola <strong>${safeName}</strong>, recibimos una solicitud para cambiar la contraseña de tu cuenta.`)}
+        ${p('Haz clic en el botón para crear una nueva. Debe tener al menos 8 caracteres, una mayúscula y un número.')}
+        ${button(link, 'Crear nueva contraseña', C.warning)}
+        ${dataTable([
+          ['Solicitado', fmtDate()],
+          ['Vence en', '1 hora'],
+        ])}
+        ${callout('¿No fuiste tú? Ignora este correo: tu contraseña <strong>no cambiará</strong> mientras nadie use este enlace.', C.danger, '🛡️')}
+        ${fallbackLink(link)}`,
+    }),
   });
 };
 
-module.exports = { sendVerificationEmail, sendPasswordResetEmail, verifyEmailTransport };
+// ────────────────────────────────────────────────
+// CONTRASEÑA CAMBIADA (aviso de seguridad)
+// ────────────────────────────────────────────────
+const sendPasswordChangedEmail = async (email, name) => {
+  const link = `${cfg().frontend}/#/forgot-password`;
+  const safeName = escapeHtml(name);
+  return sendEmail({
+    to: email,
+    subject: 'Tu contraseña de BlockSign fue cambiada',
+    text: `Hola ${name}:\n\nLa contraseña de tu cuenta se cambió el ${fmtDate()}.\nSi no fuiste tú, recupera tu cuenta de inmediato: ${link}`,
+    html: layout({
+      preheader: 'Si fuiste tú, no tienes que hacer nada.',
+      accent: C.success,
+      icon: '✅',
+      eyebrow: 'Aviso de seguridad',
+      title: 'Tu contraseña fue actualizada',
+      body: `
+        ${p(`Hola <strong>${safeName}</strong>, te confirmamos que la contraseña de tu cuenta se cambió correctamente.`)}
+        ${dataTable([
+          ['Cuenta', escapeHtml(email)],
+          ['Fecha', fmtDate()],
+        ])}
+        ${p('Si fuiste tú, no tienes que hacer nada más.')}
+        ${callout(`¿No reconoces este cambio? <a href="${link}" style="color:${C.danger};font-weight:700;">Recupera tu cuenta ahora</a> y cambia también la contraseña de tu correo.`, C.danger, '⚠️')}`,
+    }),
+  });
+};
+
+// ────────────────────────────────────────────────
+// DOCUMENTO FIRMADO (comprobante)
+// ────────────────────────────────────────────────
+const sendDocumentSignedEmail = async (email, name, info) => {
+  const { title, documentHash, txHash, blockNumber, explorerUrl, signedAt } = info;
+  const verifyLink = `${cfg().frontend}/#/home`;
+  const safeName = escapeHtml(name);
+  const safeTitle = escapeHtml(title);
+  const short = (h) => (h && h.length > 26 ? `${h.slice(0, 14)}…${h.slice(-10)}` : h || '—');
+  return sendEmail({
+    to: email,
+    subject: `Firmaste "${title}" ✍️`,
+    text: `Hola ${name}:\n\nFirmaste "${title}" y quedó registrado en la blockchain Sepolia.\n\nHuella SHA-256: ${documentHash}\nTransacción: ${txHash}\nBloque: ${blockNumber}\nVer en Etherscan: ${explorerUrl}\n\nGuarda este correo como comprobante.`,
+    html: layout({
+      preheader: `Comprobante de firma · bloque #${blockNumber}`,
+      accent: C.primary,
+      icon: '✍️',
+      eyebrow: 'Comprobante de firma',
+      title: 'Documento firmado y registrado en blockchain',
+      body: `
+        ${p(`Hola <strong>${safeName}</strong>, tu firma de <strong>“${safeTitle}”</strong> quedó registrada de forma permanente en la red Ethereum Sepolia.`)}
+        ${dataTable([
+          ['Documento', safeTitle],
+          ['Fecha', fmtDate(signedAt || new Date())],
+          ['Bloque', `#${blockNumber ?? '—'}`],
+          ['Huella SHA-256', short(documentHash), true],
+          ['Transacción', short(txHash), true],
+        ])}
+        ${explorerUrl ? button(explorerUrl, 'Ver transacción en Etherscan') : ''}
+        ${callout(`Cualquier persona puede comprobar que el archivo es auténtico subiéndolo en <a href="${verifyLink}" style="color:${C.primary};font-weight:700;">BlockSign → Verificar</a>. Si alguien cambia aunque sea un carácter, la verificación fallará.`, C.cyan, '🔎')}
+        ${p('Guarda este correo como comprobante de tu firma.', `font-size:13px;color:${C.hint};`)}`,
+    }),
+  });
+};
+
+module.exports = {
+  sendVerificationEmail,
+  sendWelcomeEmail,
+  sendPasswordResetEmail,
+  sendPasswordChangedEmail,
+  sendDocumentSignedEmail,
+  verifyEmailTransport,
+};

@@ -10,6 +10,7 @@ const {
   getNetworkInfo,
   chainErrorMessage,
 } = require('../services/blockchain.service');
+const { sendDocumentSignedEmail } = require('../services/email.service');
 
 
 // ────────────────────────────────────────────────
@@ -76,6 +77,24 @@ const finalizeSignature = async (docId, txInfo) => {
     [docId, meta.signer_id, meta.signature_hash, meta.signer_email, txInfo.txHash]
   );
   console.log(`✅ [Blockchain] Documento ${docId} confirmado en el bloque ${txInfo.blockNumber}`);
+
+  // Comprobante por correo (no bloquea ni falla la firma si el correo no sale)
+  pool
+    .query('SELECT d.title, d.file_hash, u.name, u.email FROM documents d JOIN users u ON u.id = d.user_id WHERE d.id = $1', [docId])
+    .then(({ rows }) => {
+      const r = rows[0];
+      if (!r) return;
+      return sendDocumentSignedEmail(r.email, r.name, {
+        title: r.title,
+        documentHash: r.file_hash,
+        txHash: txInfo.txHash,
+        blockNumber: txInfo.blockNumber,
+        explorerUrl: txInfo.explorerUrl,
+        signedAt: txInfo.minedAt,
+      });
+    })
+    .then(() => console.log(`[email] comprobante de firma enviado (${docId})`))
+    .catch((err) => console.error('[email] comprobante de firma: ERROR', err.message));
   return true;
 };
 

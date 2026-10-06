@@ -2,7 +2,12 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../config/db');
-const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/email.service');
+const {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendWelcomeEmail,
+  sendPasswordChangedEmail,
+} = require('../services/email.service');
 const { verifyGoogleToken } = require('../services/google.service');
 
 // ────────────────────────────────────────────────
@@ -142,7 +147,7 @@ const verifyEmail = async (req, res) => {
     const { token } = req.params;
 
     const result = await pool.query(
-      `SELECT id FROM users
+      `SELECT id, name, email FROM users
        WHERE email_verification_token = $1
          AND email_verification_expires > NOW()
          AND is_email_verified = false`,
@@ -161,6 +166,9 @@ const verifyEmail = async (req, res) => {
        WHERE id = $1`,
       [result.rows[0].id]
     );
+
+    const u = result.rows[0];
+    sendInBackground(`bienvenida a ${u.email}`, () => sendWelcomeEmail(u.email, u.name));
 
     return res.redirect(`${appBaseUrl}/#/verify-email?success=true`);
   } catch (err) {
@@ -410,7 +418,7 @@ const resetPassword = async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
+      'SELECT id, name, email FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
       [token]
     );
 
@@ -432,6 +440,9 @@ const resetPassword = async (req, res) => {
        WHERE id = $2`,
       [hashed, result.rows[0].id]
     );
+
+    const u = result.rows[0];
+    sendInBackground(`aviso de cambio de contraseña a ${u.email}`, () => sendPasswordChangedEmail(u.email, u.name));
 
     return res.json({ message: 'Contraseña actualizada exitosamente' });
   } catch (err) {
