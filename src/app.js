@@ -10,6 +10,8 @@ const profileRoutes = require('./routes/profileRoutes');
 const signatureRoutes = require('./routes/signatureRoutes');
 const signingRoutes = require('./routes/signingRoutes');
 const agentRoutes = require('./routes/agentRoutes');
+const auditRoutes = require('./routes/auditRoutes');
+const { initAudit, auditMiddleware } = require('./services/audit.service');
 
 // Inicializar Firebase
 const { initFirebase } = require('./config/firebase');
@@ -20,12 +22,19 @@ const { initBlockchain } = require('./services/blockchain.service');
 initBlockchain();
 
 const app = express();
+app.set('trust proxy', 1); // IP real detrás de un proxy (Render, Vercel…)
+
+// Auditoría: crea la tabla si no existe
+initAudit();
 
 // Seguridad
 app.use(helmet({ crossOriginOpenerPolicy: false }));
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// ID por petición + registro de auditoría
+app.use(auditMiddleware);
 
 // Rate limiting
 app.use(rateLimit({
@@ -43,6 +52,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/signatures', signatureRoutes);
 app.use('/api/signing', signingRoutes);
 app.use('/api/agent', agentRoutes);
+app.use('/api/audit', auditRoutes);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

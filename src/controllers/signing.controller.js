@@ -11,6 +11,7 @@ const {
   chainErrorMessage,
 } = require('../services/blockchain.service');
 const { sendDocumentSignedEmail } = require('../services/email.service');
+const { logAudit } = require('../services/audit.service');
 
 
 // ────────────────────────────────────────────────
@@ -77,6 +78,15 @@ const finalizeSignature = async (docId, txInfo) => {
     [docId, meta.signer_id, meta.signature_hash, meta.signer_email, txInfo.txHash]
   );
   console.log(`✅ [Blockchain] Documento ${docId} confirmado en el bloque ${txInfo.blockNumber}`);
+  logAudit({
+    userId: meta.signer_id,
+    actorEmail: meta.signer_email,
+    action: 'signing.confirmed',
+    description: `Firma confirmada en el bloque #${txInfo.blockNumber}`,
+    resource: docId,
+    result: 'permitido',
+    detail: { tx: txInfo.txHash, block: txInfo.blockNumber, gas: txInfo.gasUsed, fee_eth: txInfo.feeEth },
+  });
 
   // Comprobante por correo (no bloquea ni falla la firma si el correo no sale)
   pool
@@ -105,6 +115,15 @@ const failSignature = async (docId, message) => {
     blockchain_failed_at: new Date().toISOString(),
   });
   console.error(`❌ [Blockchain] Firma del documento ${docId} falló: ${message}`);
+  const r = await pool.query('SELECT user_id FROM documents WHERE id = $1', [docId]).catch(() => ({ rows: [] }));
+  logAudit({
+    userId: r.rows[0]?.user_id,
+    action: 'signing.failed',
+    description: 'La transacción de firma no se pudo confirmar',
+    resource: docId,
+    result: 'error',
+    detail: { error: String(message).slice(0, 200) },
+  });
 };
 
 const signDocument = async (req, res) => {

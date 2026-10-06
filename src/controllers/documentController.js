@@ -7,6 +7,7 @@ const Groq = require('groq-sdk');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const { logAudit } = require('../services/audit.service');
 
 const sanitizeFileName = (originalname) => {
   const ext = originalname.split('.').pop().toLowerCase();
@@ -270,6 +271,12 @@ Responde con este JSON exacto:
       );
 
       console.log(`✅ [IA] Documento ${docId} analizado con ${model}`);
+      pool.query('SELECT user_id FROM documents WHERE id = $1', [docId])
+        .then(({ rows }) => logAudit({
+          userId: rows[0]?.user_id, action: 'document.analyzed', description: `Análisis con IA completado (${model})`,
+          resource: docId, result: 'permitido',
+        }))
+        .catch(() => {});
       return;
     } catch (err) {
       lastErr = err;
@@ -287,6 +294,12 @@ Responde con este JSON exacto:
 
   const reason = explainGroqError(lastErr);
   console.error(`❌ [IA] No se pudo analizar el documento ${docId}: ${reason}`);
+  pool.query('SELECT user_id FROM documents WHERE id = $1', [docId])
+    .then(({ rows }) => logAudit({
+      userId: rows[0]?.user_id, action: 'document.analyze_failed', description: 'El análisis con IA falló',
+      resource: docId, result: 'error', detail: { error: String(reason).slice(0, 200) },
+    }))
+    .catch(() => {});
   // Se guarda el motivo para poder verlo en los metadatos del documento
   await pool.query(
     `UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`,
