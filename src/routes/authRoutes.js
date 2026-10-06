@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   register,
   verifyEmail,
+  resendVerification,
   login,
   googleAuth,
   forgotPassword,
@@ -13,6 +14,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 // Públicas
 router.post('/register', register);
 router.get('/verify-email/:token', verifyEmail);
+router.post('/resend-verification', resendVerification);
 router.post('/login', login);
 router.post('/google', googleAuth);
 router.post('/forgot-password', forgotPassword);
@@ -36,7 +38,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 router.get('/reset-password-redirect/:token', (req, res) => {
   const { token } = req.params;
   const flutterUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
-  res.redirect(`${flutterUrl}/#/reset-password?token=${token}`);
+  res.redirect(`${flutterUrl}/#/reset-password?token=${encodeURIComponent(token)}`);
 });
 
 module.exports = router;
