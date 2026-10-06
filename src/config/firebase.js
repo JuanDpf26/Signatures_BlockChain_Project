@@ -15,14 +15,15 @@ const initFirebase = () => {
   }
 
   try {
-    // Opción 1: Archivo JSON (desarrollo local)
-    if (process.env.NODE_ENV !== 'production') {
+    // Opción 1: Archivo JSON local (NO se sube a GitHub, está en .gitignore).
+    // Si existe la variable FIREBASE_SERVICE_ACCOUNT, se usa esa en su lugar.
+    if (process.env.NODE_ENV !== 'production' && !process.env.FIREBASE_SERVICE_ACCOUNT) {
       const serviceAccount = require('./firebase-service-account.json');
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       });
     } else {
-      // Opción 2: Variable de entorno (Railway en producción)
+      // Opción 2: Variable de entorno (producción o si se definió en el .env)
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),

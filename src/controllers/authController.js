@@ -5,7 +5,7 @@ const pool = require('../config/db');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/email.service');
 const { verifyGoogleToken } = require('../services/google.service');
 
-// holaaa────────────────────────────────────────────────
+// ────────────────────────────────────────────────
 // HELPERS
 // ────────────────────────────────────────────────
 const generateToken = (userId) =>
@@ -13,17 +13,35 @@ const generateToken = (userId) =>
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
+// Guarda y compara siempre el correo en minúsculas y sin espacios
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+
 const isStrongPassword = (password) =>
   password.length >= 8 &&
   /[A-Z]/.test(password) &&
   /[0-9]/.test(password);
+
+const newVerificationToken = () => ({
+  token: crypto.randomBytes(32).toString('hex'),
+  expires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h
+});
+
+// Envía en segundo plano: la respuesta HTTP no espera al servidor de correo
+// (Gmail puede tardar varios segundos y el frontend corta a los 15 s).
+const sendInBackground = (label, fn) => {
+  Promise.resolve()
+    .then(fn)
+    .then(() => console.log(`[email] ${label}: enviado`))
+    .catch((err) => console.error(`[email] ${label}: ERROR`, err.code || '', err.message));
+};
 
 // ────────────────────────────────────────────────
 // REGISTER
 // ────────────────────────────────────────────────
 const register = async (req, res) => {
   try {
-    const { name, email, password, document_id, phone, captchaToken } = req.body;
+    const { name, password, document_id, phone, captchaToken } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     // Validaciones básicas
     if (!name || !email || !password || !document_id || !phone) {
@@ -48,33 +66,52 @@ const register = async (req, res) => {
       return res.status(400).json({ error: 'El teléfono debe tener 10 dígitos' });
     }
 
-    // CAPTCHA desactivado en desarrollo
-// TODO: reactivar en producción
-if (!captchaToken) {
-  return res.status(400).json({ error: 'Debes completar el captcha' });
-}
-const captchaValid = await verifyCaptcha(captchaToken);
-if (!captchaValid) {
-  return res.status(400).json({ error: 'Captcha inválido, intenta de nuevo' });
-}
+    // CAPTCHA
+    if (!captchaToken) {
+      return res.status(400).json({ error: 'Debes completar el captcha' });
+    }
+    const captchaValid = await verifyCaptcha(captchaToken);
+    if (!captchaValid) {
+      return res.status(400).json({ error: 'Captcha inválido, intenta de nuevo' });
+    }
 
-    // Verificar si el correo ya existe
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    // ¿El correo ya existe?
+    const existing = await pool.query(
+      'SELECT id, name, is_email_verified FROM users WHERE LOWER(email) = $1',
+      [email]
+    );
+
     if (existing.rows.length > 0) {
+      const user = existing.rows[0];
+
+      // Cuenta creada pero nunca verificada (p. ej. el correo no llegó):
+      // generamos un token nuevo y reenviamos, en vez de dejarla atrapada.
+      if (!user.is_email_verified) {
+        const { token, expires } = newVerificationToken();
+        await pool.query(
+          `UPDATE users
+             SET email_verification_token = $1,
+                 email_verification_expires = $2
+           WHERE id = $3`,
+          [token, expires, user.id]
+        );
+        sendInBackground(`verificación (reenvío) a ${email}`, () => sendVerificationEmail(email, user.name, token));
+        return res.status(200).json({
+          message: 'Esta cuenta ya estaba registrada pero no verificada. Te enviamos un nuevo correo de verificación.',
+        });
+      }
+
       return res.status(409).json({ error: 'Ya existe una cuenta con este correo' });
     }
 
-    // Verificar documento duplicado
+    // Documento duplicado
     const existingDoc = await pool.query('SELECT id FROM users WHERE document_id = $1', [document_id]);
     if (existingDoc.rows.length > 0) {
       return res.status(409).json({ error: 'Ya existe una cuenta con este documento' });
     }
 
     const hashed = await bcrypt.hash(password, 12);
-
-    // Token de verificación de email
-    const verificationToken = crypto.randomBytes(32).toString('hex');
-    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+    const { token: verificationToken, expires: verificationExpires } = newVerificationToken();
 
     const result = await pool.query(
       `INSERT INTO users (name, email, password, document_id, phone, email_verification_token, email_verification_expires, is_email_verified)
@@ -83,8 +120,8 @@ if (!captchaValid) {
       [name, email, hashed, document_id, phone, verificationToken, verificationExpires]
     );
 
-    // Enviar correo de verificación
-    await sendVerificationEmail(email, name, verificationToken);
+    // La cuenta queda creada aunque el correo falle; se puede reenviar después
+    sendInBackground(`verificación a ${email}`, () => sendVerificationEmail(email, name, verificationToken));
 
     return res.status(201).json({
       message: 'Cuenta creada. Revisa tu correo para verificar tu cuenta.',
@@ -99,12 +136,10 @@ if (!captchaValid) {
 // ────────────────────────────────────────────────
 // VERIFY EMAIL
 // ────────────────────────────────────────────────
-// Reemplaza SOLO la función verifyEmail en tu authController.js
-
 const verifyEmail = async (req, res) => {
+  const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
   try {
     const { token } = req.params;
-    const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
 
     const result = await pool.query(
       `SELECT id FROM users
@@ -115,7 +150,6 @@ const verifyEmail = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      // Redirigir a Flutter con error
       return res.redirect(`${appBaseUrl}/#/verify-email?success=false`);
     }
 
@@ -128,27 +162,66 @@ const verifyEmail = async (req, res) => {
       [result.rows[0].id]
     );
 
-    // Redirigir a Flutter con éxito
     return res.redirect(`${appBaseUrl}/#/verify-email?success=true`);
-
   } catch (err) {
     console.error('ERROR VERIFY EMAIL:', err);
-    const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
     return res.redirect(`${appBaseUrl}/#/verify-email?success=false`);
   }
 };
+
+// ────────────────────────────────────────────────
+// RESEND VERIFICATION  (nuevo)
+// POST /api/auth/resend-verification   body: { email }
+// ────────────────────────────────────────────────
+const resendVerification = async (req, res) => {
+  const genericMsg = 'Si la cuenta existe y no está verificada, te enviamos un nuevo correo de verificación.';
+  try {
+    const email = normalizeEmail(req.body.email);
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: 'Correo electrónico inválido' });
+    }
+
+    const result = await pool.query(
+      'SELECT id, name, is_email_verified FROM users WHERE LOWER(email) = $1',
+      [email]
+    );
+
+    // Misma respuesta exista o no, para no revelar qué correos están registrados
+    if (result.rows.length === 0 || result.rows[0].is_email_verified) {
+      return res.json({ message: genericMsg });
+    }
+
+    const user = result.rows[0];
+    const { token, expires } = newVerificationToken();
+    await pool.query(
+      `UPDATE users
+         SET email_verification_token = $1,
+             email_verification_expires = $2
+       WHERE id = $3`,
+      [token, expires, user.id]
+    );
+
+    sendInBackground(`verificación (reenvío) a ${email}`, () => sendVerificationEmail(email, user.name, token));
+    return res.json({ message: genericMsg });
+  } catch (err) {
+    console.error('ERROR RESEND VERIFICATION:', err);
+    return res.status(500).json({ error: 'Error al procesar la solicitud' });
+  }
+};
+
 // ────────────────────────────────────────────────
 // LOGIN
 // ────────────────────────────────────────────────
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const { password } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Correo y contraseña son requeridos' });
     }
 
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = $1', [email]);
 
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Credenciales incorrectas' });
@@ -156,9 +229,15 @@ const login = async (req, res) => {
 
     const user = result.rows[0];
 
-    // Verificar si es cuenta de Google (sin password)
+    // Cuenta de Google (sin password)
     if (!user.password) {
       return res.status(400).json({ error: 'Esta cuenta usa Google. Inicia sesión con Google.' });
+    }
+
+    // Primero la contraseña: así no se revela si una cuenta existe sin verificar
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Credenciales incorrectas' });
     }
 
     if (!user.is_email_verified) {
@@ -167,12 +246,6 @@ const login = async (req, res) => {
       });
     }
 
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Credenciales incorrectas' });
-    }
-
-    // Actualizar último login
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
     const token = generateToken(user.id);
@@ -210,7 +283,7 @@ const googleAuth = async (req, res) => {
       // En web viene accessToken — lo verificamos con la API de Google
       const response = await fetch(
         'https://www.googleapis.com/oauth2/v3/userinfo',
-        { headers: { Authorization: `Bearer ${idToken}` } }
+        { headers: { Authorization: `Bearer ${idToken}` }, signal: AbortSignal.timeout(8000) }
       );
       const googleUser = await response.json();
 
@@ -236,8 +309,9 @@ const googleAuth = async (req, res) => {
       googleId = googleUser.sub;
     }
 
-    // Buscar usuario existente
-    let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    email = normalizeEmail(email);
+
+    let result = await pool.query('SELECT * FROM users WHERE LOWER(email) = $1', [email]);
 
     if (result.rows.length === 0) {
       result = await pool.query(
@@ -246,13 +320,19 @@ const googleAuth = async (req, res) => {
          RETURNING *`,
         [name, email, googleId, picture]
       );
+    } else if (!result.rows[0].google_id) {
+      // Google ya confirmó el correo, así que la cuenta queda verificada
+      await pool.query(
+        `UPDATE users
+           SET google_id = $1, avatar_url = $2, last_login = NOW(),
+               is_email_verified = true,
+               email_verification_token = NULL,
+               email_verification_expires = NULL
+         WHERE id = $3`,
+        [googleId, picture, result.rows[0].id]
+      );
     } else {
-      if (!result.rows[0].google_id) {
-        await pool.query(
-          'UPDATE users SET google_id = $1, avatar_url = $2, last_login = NOW() WHERE id = $3',
-          [googleId, picture, result.rows[0].id]
-        );
-      }
+      await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [result.rows[0].id]);
     }
 
     const user = result.rows[0];
@@ -278,18 +358,19 @@ const googleAuth = async (req, res) => {
 // FORGOT PASSWORD
 // ────────────────────────────────────────────────
 const forgotPassword = async (req, res) => {
+  const genericMsg = 'Si el correo existe, recibirás un enlace de recuperación.';
   try {
-    const { email } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     if (!email || !isValidEmail(email)) {
       return res.status(400).json({ error: 'Correo electrónico inválido' });
     }
 
-    const result = await pool.query('SELECT id, name FROM users WHERE email = $1', [email]);
+    const result = await pool.query('SELECT id, name FROM users WHERE LOWER(email) = $1', [email]);
 
     // Siempre responder igual para no revelar si el correo existe
     if (result.rows.length === 0) {
-      return res.json({ message: 'Si el correo existe, recibirás un enlace de recuperación.' });
+      return res.json({ message: genericMsg });
     }
 
     const user = result.rows[0];
@@ -301,9 +382,10 @@ const forgotPassword = async (req, res) => {
       [resetToken, resetExpires, user.id]
     );
 
-    await sendPasswordResetEmail(email, user.name, resetToken);
+    // Responde de inmediato; el fallo (si lo hay) queda en el log del servidor
+    sendInBackground(`recuperación a ${email}`, () => sendPasswordResetEmail(email, user.name, resetToken));
 
-    return res.json({ message: 'Si el correo existe, recibirás un enlace de recuperación.' });
+    return res.json({ message: genericMsg });
   } catch (err) {
     console.error('ERROR FORGOT PASSWORD:', err);
     return res.status(500).json({ error: 'Error al procesar la solicitud' });
@@ -338,8 +420,16 @@ const resetPassword = async (req, res) => {
 
     const hashed = await bcrypt.hash(newPassword, 12);
 
+    // Si pudo recibir el enlace en su correo, ese correo queda verificado
     await pool.query(
-      'UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2',
+      `UPDATE users
+         SET password = $1,
+             reset_token = NULL,
+             reset_token_expires = NULL,
+             is_email_verified = true,
+             email_verification_token = NULL,
+             email_verification_expires = NULL
+       WHERE id = $2`,
       [hashed, result.rows[0].id]
     );
 
@@ -351,19 +441,34 @@ const resetPassword = async (req, res) => {
 };
 
 // ────────────────────────────────────────────────
-// VERIFY CAPTCHA (hCaptcha)
+// VERIFY CAPTCHA (Google reCAPTCHA)
 // ────────────────────────────────────────────────
 const verifyCaptcha = async (token) => {
   try {
-    const response = await fetch(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET}&response=${token}`,
-      { method: 'POST' }
-    );
+    const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        secret: process.env.RECAPTCHA_SECRET || '',
+        response: token,
+      }),
+      signal: AbortSignal.timeout(8000), // no dejar colgado el registro si Google no responde
+    });
     const data = await response.json();
+    if (data.success !== true) console.error('[captcha] Google rechazó el captcha:', data['error-codes'] || data);
     return data.success === true;
-  } catch {
+  } catch (err) {
+    console.error('[captcha] No se pudo verificar con Google:', err.name, err.message);
     return false;
   }
 };
 
-module.exports = { register, verifyEmail, login, googleAuth, forgotPassword, resetPassword };
+module.exports = {
+  register,
+  verifyEmail,
+  resendVerification,
+  login,
+  googleAuth,
+  forgotPassword,
+  resetPassword,
+};
