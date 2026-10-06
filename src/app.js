@@ -9,6 +9,7 @@ const documentRoutes = require('./routes/documentRoutes');
 const profileRoutes = require('./routes/profileRoutes');
 const signatureRoutes = require('./routes/signatureRoutes');
 const signingRoutes = require('./routes/signingRoutes');
+const agentRoutes = require('./routes/agentRoutes');
 
 // Inicializar Firebase
 const { initFirebase } = require('./config/firebase');
@@ -41,6 +42,7 @@ app.use('/api/documents', documentRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/signatures', signatureRoutes);
 app.use('/api/signing', signingRoutes);
+app.use('/api/agent', agentRoutes);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

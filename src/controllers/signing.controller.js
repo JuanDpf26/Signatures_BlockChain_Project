@@ -492,6 +492,7 @@ const revokeSignature = async (req, res) => {
 };
 
 module.exports = {
+  buildVerification,
   signDocument,
   getSigningStatus,
   verifyDocument,

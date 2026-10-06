@@ -406,4 +406,18 @@ const getStats = async (req, res) => {
   } catch (err) { return res.status(500).json({ error: 'Error al obtener estadísticas' }); }
 };
 
-module.exports = { uploadDocument, getDocuments, getDocument, reanalyzeDocument, updateDocumentMeta, deleteDocument, getStats };
+module.exports = {
+  uploadDocument,
+  getDocuments,
+  getDocument,
+  reanalyzeDocument,
+  updateDocumentMeta,
+  deleteDocument,
+  getStats,
+  // usados por el asistente IA
+  parsePdf,
+  GROQ_MODELS,
+  explainGroqError,
+  isModelError,
+  parseJsonLoose,
+};
