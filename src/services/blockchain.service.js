@@ -259,7 +259,121 @@ const getWalletInfo = async () => {
   }
 };
 
+
+// ────────────────────────────────────────────────
+// FIRMA EN DOS PASOS (para mostrar el proceso en la app)
+// 1) sendSignatureTx: envía la transacción y devuelve el hash al instante
+// 2) getTxStatus: consulta si ya se minó, en qué bloque y cuántas confirmaciones
+// ────────────────────────────────────────────────
+const EXPLORER = 'https://sepolia.etherscan.io';
+
+const isReady = () => initialized;
+
+const chainErrorMessage = (err) => {
+  const raw = err?.shortMessage || err?.reason || err?.info?.error?.message || err?.message || String(err);
+  if (/insufficient funds/i.test(raw)) return 'La wallet del servidor no tiene ETH de prueba suficiente (Sepolia). Recárgala en un faucet.';
+  if (/ya registrado|already registered/i.test(raw)) return 'Este documento ya está registrado en blockchain.';
+  if (/network|ECONNREFUSED|ENOTFOUND|timeout/i.test(raw)) return 'No hay conexión con el nodo de Sepolia (revisa BLOCKCHAIN_RPC_URL).';
+  return raw;
+};
+
+const isAlreadyRegistered = async (documentHash) => {
+  if (!initialized) return false;
+  try {
+    return await contract.isDocumentRegistered(hexToBytes32(documentHash));
+  } catch (_) {
+    return false;
+  }
+};
+
+const sendSignatureTx = async ({ documentHash, signatureHash, signerEmail, documentTitle }) => {
+  if (!initialized) throw new Error('Blockchain no configurada (faltan variables BLOCKCHAIN_* en el .env)');
+  const docHash = hexToBytes32(documentHash);
+  const sigHash = hexToBytes32(signatureHash);
+  try {
+    const gasEstimate = await contract.signDocument.estimateGas(docHash, sigHash, signerEmail, documentTitle);
+    const tx = await contract.signDocument(docHash, sigHash, signerEmail, documentTitle, {
+      gasLimit: (gasEstimate * 120n) / 100n,
+    });
+    console.log(`📝 [Blockchain] Tx enviada ${tx.hash} (doc ${docHash.slice(0, 12)}…)`);
+    return { tx, txHash: tx.hash, explorerUrl: `${EXPLORER}/tx/${tx.hash}`, from: wallet.address };
+  } catch (err) {
+    const e = new Error(chainErrorMessage(err));
+    e.alreadyRegistered = /ya registrado|already registered/i.test(err?.shortMessage || err?.reason || err?.message || '');
+    throw e;
+  }
+};
+
+/** Estado de una transacción: pending | confirmed | failed | not_found */
+const getTxStatus = async (txHash) => {
+  if (!initialized || !txHash) return { state: 'not_found' };
+  try {
+    const [receipt, latest] = await Promise.all([
+      provider.getTransactionReceipt(txHash),
+      provider.getBlockNumber(),
+    ]);
+    if (!receipt) {
+      const tx = await provider.getTransaction(txHash);
+      return tx
+        ? { state: 'pending', txHash, from: tx.from, to: tx.to, latestBlock: latest, explorerUrl: `${EXPLORER}/tx/${txHash}` }
+        : { state: 'not_found', txHash };
+    }
+    const block = await provider.getBlock(receipt.blockNumber);
+    const gasPrice = receipt.gasPrice ?? receipt.effectiveGasPrice ?? 0n;
+    return {
+      state: receipt.status === 1 ? 'confirmed' : 'failed',
+      txHash,
+      blockNumber: receipt.blockNumber,
+      confirmations: Math.max(0, latest - receipt.blockNumber + 1),
+      latestBlock: latest,
+      gasUsed: receipt.gasUsed.toString(),
+      feeEth: ethers.formatEther(receipt.gasUsed * gasPrice),
+      from: receipt.from,
+      to: receipt.to,
+      timestamp: block ? Number(block.timestamp) : null,
+      minedAt: block ? new Date(Number(block.timestamp) * 1000).toISOString() : null,
+      explorerUrl: `${EXPLORER}/tx/${txHash}`,
+    };
+  } catch (err) {
+    return { state: 'unknown', txHash, error: chainErrorMessage(err) };
+  }
+};
+
+/** Datos de la red para mostrar en la app */
+const getNetworkInfo = async () => {
+  if (!initialized) return { connected: false, error: 'Blockchain no configurada' };
+  try {
+    const [net, latest, balance, total, fee] = await Promise.all([
+      provider.getNetwork(),
+      provider.getBlockNumber(),
+      provider.getBalance(wallet.address),
+      contract.getTotalDocuments().catch(() => null),
+      provider.getFeeData().catch(() => null),
+    ]);
+    return {
+      connected: true,
+      network: 'Sepolia',
+      chainId: Number(net.chainId),
+      latestBlock: latest,
+      wallet: wallet.address,
+      balanceEth: ethers.formatEther(balance),
+      contractAddress: process.env.BLOCKCHAIN_CONTRACT_ADDRESS,
+      contractUrl: `${EXPLORER}/address/${process.env.BLOCKCHAIN_CONTRACT_ADDRESS}`,
+      totalDocuments: total != null ? Number(total) : null,
+      gasPriceGwei: fee?.gasPrice ? ethers.formatUnits(fee.gasPrice, 'gwei') : null,
+    };
+  } catch (err) {
+    return { connected: false, error: chainErrorMessage(err) };
+  }
+};
+
 module.exports = {
+  isReady,
+  isAlreadyRegistered,
+  sendSignatureTx,
+  getTxStatus,
+  getNetworkInfo,
+  chainErrorMessage,
   initBlockchain,
   registerSignatureOnBlockchain,
   verifySignatureOnBlockchain,

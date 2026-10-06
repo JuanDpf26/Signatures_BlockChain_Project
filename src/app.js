@@ -29,8 +29,10 @@ app.use(express.urlencoded({ extended: true }));
 // Rate limiting
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: Number(process.env.RATE_LIMIT_MAX) || 600,
   message: { error: 'Demasiadas solicitudes, intenta más tarde' },
+  // El seguimiento de la firma consulta cada pocos segundos: no cuenta para el límite
+  skip: (req) => req.method === 'GET' && /^\/api\/signing\/[^/]+\/status$/.test(req.path),
 }));
 
 // Rutas
