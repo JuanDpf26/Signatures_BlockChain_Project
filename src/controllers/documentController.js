@@ -448,16 +448,70 @@ const deleteDocument = async (req, res) => {
 
 const getStats = async (req, res) => {
   try {
-    const s = (await pool.query(
-      `SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='signed') as signed,
-       COUNT(*) FILTER (WHERE status='verified') as verified, COUNT(*) FILTER (WHERE status='pending') as pending,
-       COUNT(*) FILTER (WHERE metadata->>'extension'='pdf') as pdfs,
-       COUNT(*) FILTER (WHERE metadata->>'extension' IN ('doc','docx')) as words,
-       COALESCE(SUM((metadata->>'size_bytes')::bigint),0) as total_size
-       FROM documents WHERE user_id = $1`, [req.user.id]
-    )).rows[0];
-    return res.json({ total: parseInt(s.total), signed: parseInt(s.signed), verified: parseInt(s.verified), pending: parseInt(s.pending), pdfs: parseInt(s.pdfs), words: parseInt(s.words), total_size_mb: (parseInt(s.total_size)/(1024*1024)).toFixed(2) });
-  } catch (err) { return res.status(500).json({ error: 'Error al obtener estadísticas' }); }
+    const uid = req.user.id;
+    // Fecha de firma segura (si el texto no es una fecha, queda NULL en vez de fallar)
+    const SIGNED_AT = `CASE WHEN metadata->>'signed_at' ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (metadata->>'signed_at')::timestamptz END`;
+    const [base, extra, conf, activity] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='signed') as signed,
+         COUNT(*) FILTER (WHERE status='verified') as verified, COUNT(*) FILTER (WHERE status='pending') as pending,
+         COUNT(*) FILTER (WHERE metadata->>'extension'='pdf') as pdfs,
+         COUNT(*) FILTER (WHERE metadata->>'extension' IN ('doc','docx')) as words,
+         COALESCE(SUM((metadata->>'size_bytes')::bigint),0) as total_size
+         FROM documents WHERE user_id = $1`, [uid]
+      ),
+      pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE status IN ('signed','verified') AND ${SIGNED_AT} >= date_trunc('month', NOW())) AS signed_month,
+           AVG(EXTRACT(EPOCH FROM (${SIGNED_AT} - created_at)) / 3600) FILTER (WHERE status IN ('signed','verified')) AS avg_hours_to_sign,
+           COUNT(*) FILTER (WHERE metadata ? 'ai_analyzed_at') AS analyzed,
+           COUNT(*) FILTER (WHERE metadata ? 'ai_error' AND NOT metadata ? 'ai_analyzed_at') AS ai_errors,
+           COUNT(*) FILTER (WHERE (metadata->>'revoked')::text = 'true') AS revoked,
+           COUNT(*) FILTER (WHERE metadata->>'blockchain_status' IN ('sending','confirming')) AS in_chain,
+           COALESCE(SUM(CASE WHEN metadata->>'blockchain_fee_eth' ~ '^[0-9.]+$' THEN (metadata->>'blockchain_fee_eth')::numeric END), 0) AS gas_eth,
+           MAX(CASE WHEN metadata->>'blockchain_block' ~ '^[0-9]+$' THEN (metadata->>'blockchain_block')::bigint END) AS last_block,
+           COALESCE(SUM(CASE WHEN metadata->>'pages' ~ '^[0-9]+$' THEN (metadata->>'pages')::int END), 0) AS pages
+         FROM documents WHERE user_id = $1`, [uid]
+      ),
+      pool.query(
+        `SELECT COALESCE(NULLIF(metadata->>'ai_confidentiality',''), 'Sin analizar') AS level, COUNT(*)::int AS n
+           FROM documents WHERE user_id = $1 GROUP BY 1 ORDER BY 2 DESC`, [uid]
+      ),
+      pool.query(
+        `WITH days AS (
+           SELECT generate_series((NOW() AT TIME ZONE 'America/Bogota')::date - 6, (NOW() AT TIME ZONE 'America/Bogota')::date, '1 day')::date AS day
+         )
+         SELECT d.day,
+           (SELECT COUNT(*) FROM documents x WHERE x.user_id = $1 AND (x.created_at AT TIME ZONE 'America/Bogota')::date = d.day)::int AS uploaded,
+           (SELECT COUNT(*) FROM documents x WHERE x.user_id = $1 AND x.status IN ('signed','verified')
+              AND (CASE WHEN x.metadata->>'signed_at' ~ '^\\d{4}-\\d{2}-\\d{2}' THEN ((x.metadata->>'signed_at')::timestamptz AT TIME ZONE 'America/Bogota')::date END) = d.day)::int AS signed
+         FROM days d ORDER BY d.day`, [uid]
+      ),
+    ]);
+    const s = base.rows[0];
+    const e = extra.rows[0];
+    const total = parseInt(s.total);
+    return res.json({
+      total, signed: parseInt(s.signed), verified: parseInt(s.verified), pending: parseInt(s.pending),
+      pdfs: parseInt(s.pdfs), words: parseInt(s.words),
+      total_size_mb: (parseInt(s.total_size) / (1024 * 1024)).toFixed(2),
+      signed_month: parseInt(e.signed_month) || 0,
+      avg_hours_to_sign: e.avg_hours_to_sign != null ? Number(Number(e.avg_hours_to_sign).toFixed(1)) : null,
+      analyzed: parseInt(e.analyzed) || 0,
+      analyzed_pct: total ? Math.round((parseInt(e.analyzed) * 100) / total) : 0,
+      ai_errors: parseInt(e.ai_errors) || 0,
+      revoked: parseInt(e.revoked) || 0,
+      in_chain: parseInt(e.in_chain) || 0,
+      gas_eth: Number(e.gas_eth || 0).toFixed(6),
+      last_block: e.last_block != null ? Number(e.last_block) : null,
+      pages: parseInt(e.pages) || 0,
+      confidentiality: conf.rows,
+      activity: activity.rows.map((r) => ({ day: r.day, uploaded: r.uploaded, signed: r.signed })),
+    });
+  } catch (err) {
+    console.error('ERROR STATS:', err.message);
+    return res.status(500).json({ error: 'Error al obtener estadísticas' });
+  }
 };
 
 module.exports = {
