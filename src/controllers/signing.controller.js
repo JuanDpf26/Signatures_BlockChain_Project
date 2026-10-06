@@ -12,6 +12,7 @@ const {
 } = require('../services/blockchain.service');
 const { sendDocumentSignedEmail } = require('../services/email.service');
 const { logAudit } = require('../services/audit.service');
+const keys = require('../services/keys.service');
 
 
 // ────────────────────────────────────────────────
@@ -72,10 +73,12 @@ const finalizeSignature = async (docId, txInfo) => {
   );
   if (upd.rowCount === 0) return false;
 
+  // public_key guarda la clave pública del firmante (antes guardaba el correo)
+  const pk = meta.signer_id ? await keys.getPublicKey(meta.signer_id).catch(() => null) : null;
   await pool.query(
     `INSERT INTO signatures (document_id, signer_id, signature_hash, public_key, blockchain_tx, is_valid, signed_at)
      VALUES ($1, $2, $3, $4, $5, true, NOW())`,
-    [docId, meta.signer_id, meta.signature_hash, meta.signer_email, txInfo.txHash]
+    [docId, meta.signer_id, meta.signature_hash, pk?.public_key_pem || meta.signer_email, txInfo.txHash]
   );
   console.log(`✅ [Blockchain] Documento ${docId} confirmado en el bloque ${txInfo.blockNumber}`);
   logAudit({
@@ -177,10 +180,23 @@ const signDocument = async (req, res) => {
       });
     }
 
-    const signatureHash = crypto
-      .createHash('sha256')
-      .update(`${documentHash}:${userId}:${Date.now()}`)
-      .digest('hex');
+    // Firma digital con la clave privada del usuario (ECDSA P-256).
+    // Se firma un texto que incluye la huella del archivo, el firmante y la fecha;
+    // el hash de esa firma es el que se registra en el contrato.
+    let userKey;
+    try {
+      userKey = await keys.getOrCreateUserKeys(userId);
+      if (userKey.created) {
+        logAudit({ userId, actorEmail: user.email, action: 'keys.generate', description: 'Se generó su par de claves ECDSA P-256', resource: userKey.fingerprint.slice(0, 16), result: 'permitido', requestId: req.id });
+      }
+    } catch (err) {
+      console.error('ERROR KEYS:', err.message);
+      return res.status(500).json({ error: 'No se pudieron preparar tus claves de firma' });
+    }
+    const signedAt = new Date().toISOString();
+    const signaturePayload = keys.buildPayload({ documentHash, signerEmail: user.email, signedAt });
+    const signatureValue = await keys.signWithUserKey(userId, signaturePayload);
+    const signatureHash = keys.signatureDigest(signatureValue);
 
     await mergeMeta(doc.id, {
       blockchain_status: 'sending',
@@ -190,6 +206,11 @@ const signDocument = async (req, res) => {
       signer_email: user.email,
       signer_name: user.name,
       signature_hash: signatureHash,
+      signature_value: signatureValue,
+      signature_payload: signaturePayload,
+      signature_algorithm: keys.ALGORITHM,
+      signer_key_fingerprint: userKey.fingerprint,
+      signature_created_at: signedAt,
       signature_image_url: sigResult.rows[0].signature_url,
     });
 
@@ -230,6 +251,8 @@ const signDocument = async (req, res) => {
       status: 'confirming',
       documentHash,
       signatureHash,
+      signatureAlgorithm: keys.ALGORITHM,
+      publicKeyFingerprint: userKey.fingerprint,
       txHash: sent.txHash,
       explorerUrl: sent.explorerUrl,
       from: sent.from,
@@ -365,8 +388,42 @@ const buildVerification = async (hash) => {
     });
   }
 
+  // Firma digital del firmante: se comprueba con su clave pública
+  let sigInfo = null;
+  if (meta.signature_value && meta.signature_payload && meta.signer_id) {
+    const pk = await keys.getPublicKey(meta.signer_id).catch(() => null);
+    const ecdsaOk = !!pk && keys.verifySignature(pk.public_key_pem, meta.signature_payload, meta.signature_value)
+      && meta.signature_payload.includes(`doc:${h}`);
+    steps.push({
+      key: 'user_signature',
+      label: 'Firma digital del firmante (ECDSA P-256)',
+      ok: ecdsaOk,
+      detail: ecdsaOk
+        ? `Válida con la clave pública ${pk.fingerprint.slice(0, 16)}…`
+        : 'La firma no corresponde a la clave pública del firmante',
+    });
+    let linkOk = null;
+    if (chain.onChain && chain.signatureHash) {
+      linkOk = String(chain.signatureHash).toLowerCase().replace(/^0x/, '') === keys.signatureDigest(meta.signature_value);
+      steps.push({
+        key: 'chain_link',
+        label: 'La firma coincide con la registrada en blockchain',
+        ok: linkOk,
+        detail: linkOk ? 'El hash de la firma es el mismo que guarda el contrato' : 'El hash de la firma no coincide con el contrato',
+      });
+    }
+    sigInfo = {
+      algorithm: meta.signature_algorithm || keys.ALGORITHM,
+      fingerprint: pk?.fingerprint || meta.signer_key_fingerprint || null,
+      publicKey: pk?.public_key_pem || null,
+      signedAt: meta.signature_created_at || null,
+      valid: ecdsaOk && linkOk !== false,
+    };
+  }
+
   let verdict = 'not_registered';
   if (chain.onChain) verdict = chain.isValid ? 'authentic' : 'revoked';
+  if (verdict === 'authentic' && sigInfo && !sigInfo.valid) verdict = 'invalid_signature';
   else if (ACTIVE_STATES.includes(meta.blockchain_status)) verdict = 'pending';
   else if (networkError) verdict = 'unavailable';
 
@@ -397,9 +454,13 @@ const buildVerification = async (hash) => {
         }
       : null,
     transaction: tx,
+    signature: sigInfo,
     checkedAt: new Date().toISOString(),
     message: {
-      authentic: 'Documento auténtico: su huella está registrada en blockchain y la firma está vigente.',
+      authentic: sigInfo
+        ? 'Documento auténtico: la firma digital del firmante es válida, coincide con blockchain y está vigente.'
+        : 'Documento auténtico: su huella está registrada en blockchain y la firma está vigente.',
+      invalid_signature: 'La huella está en blockchain, pero la firma digital no se pudo comprobar con la clave pública del firmante.',
       revoked: 'El documento fue registrado, pero su firma fue revocada.',
       pending: 'La firma está en proceso: la transacción aún no se confirma.',
       unavailable: 'No se pudo consultar la blockchain en este momento. Inténtalo de nuevo.',

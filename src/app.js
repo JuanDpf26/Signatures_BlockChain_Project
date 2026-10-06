@@ -12,6 +12,8 @@ const signingRoutes = require('./routes/signingRoutes');
 const agentRoutes = require('./routes/agentRoutes');
 const auditRoutes = require('./routes/auditRoutes');
 const { initAudit, auditMiddleware } = require('./services/audit.service');
+const { initKeys } = require('./services/keys.service');
+const keysRoutes = require('./routes/keysRoutes');
 
 // Inicializar Firebase
 const { initFirebase } = require('./config/firebase');
@@ -26,6 +28,7 @@ app.set('trust proxy', 1); // IP real detrás de un proxy (Render, Vercel…)
 
 // Auditoría: crea la tabla si no existe
 initAudit();
+initKeys();
 
 // Seguridad
 app.use(helmet({ crossOriginOpenerPolicy: false }));
@@ -53,6 +56,7 @@ app.use('/api/signatures', signatureRoutes);
 app.use('/api/signing', signingRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/keys', keysRoutes);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
