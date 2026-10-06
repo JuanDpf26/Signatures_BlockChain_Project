@@ -176,11 +176,25 @@ const isModelError = (err) => {
     || /model/i.test(err?.message || '') && [400, 404].includes(err?.status);
 };
 
+// Guarda en qué etapa va el análisis para que la app muestre el proceso en vivo
+const setAiStage = (docId, stage, extra = {}) =>
+  pool
+    .query(`UPDATE documents SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2`, [
+      JSON.stringify({ ai_stage: stage, ai_stage_at: new Date().toISOString(), ...extra }),
+      docId,
+    ])
+    .catch(() => {});
+
 const generateDescriptionWithGroq = async (docId, metadata) => {
   if (!process.env.GROQ_API_KEY) {
     console.log('⚠️ [IA] GROQ_API_KEY no configurada en el .env: no se analizan documentos');
+    await setAiStage(docId, 'failed', {
+      ai_error: 'GROQ_API_KEY no configurada en el servidor',
+      ai_error_at: new Date().toISOString(),
+    });
     return;
   }
+  await setAiStage(docId, 'reading');
 
   const {
     original_name, extension, size_mb, pages,
@@ -209,6 +223,7 @@ Responde con este JSON exacto:
   let lastErr;
   for (const model of GROQ_MODELS) {
     try {
+      await setAiStage(docId, 'thinking', { ai_trying_model: model });
       const completion = await groq.chat.completions.create({
         messages: [{ role: 'user', content: prompt }],
         model,
@@ -229,6 +244,7 @@ Responde con este JSON exacto:
           ai_summary: aiData.summary || null,
           ai_model: model,
           ai_analyzed_at: new Date().toISOString(),
+          ai_stage: 'done',
         }), docId]
       );
 
@@ -249,7 +265,7 @@ Responde con este JSON exacto:
   // Se guarda el motivo para poder verlo en los metadatos del documento
   await pool.query(
     `UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`,
-    [JSON.stringify({ ai_error: reason, ai_error_at: new Date().toISOString() }), docId]
+    [JSON.stringify({ ai_error: reason, ai_error_at: new Date().toISOString(), ai_stage: 'failed' }), docId]
   ).catch(() => {});
 };
 
