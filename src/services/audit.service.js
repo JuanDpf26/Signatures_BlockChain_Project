@@ -82,7 +82,8 @@ const RULES = [
   ['POST', /^\/api\/auth\/reset-password$/, 'auth.reset_password', 'Cambio de contraseña por enlace'],
   ['POST', /^\/api\/documents\/upload$/, 'document.upload', 'Subió un documento'],
   ['POST', new RegExp(`^/api/documents/${UUID}/reanalyze$`), 'document.reanalyze', 'Solicitó análisis con IA'],
-  ['PATCH', new RegExp(`^/api/documents/${UUID}$`), 'document.update', 'Editó metadatos de un documento'],
+  ['PATCH', new RegExp(`^/api/documents/${UUID}$`), 'document.update', 'Editó los datos de un documento'],
+  ['PUT', new RegExp(`^/api/documents/${UUID}/file$`), 'document.replace_file', 'Reemplazó el archivo de un documento (nueva versión)'],
   ['DELETE', new RegExp(`^/api/documents/${UUID}$`), 'document.delete', 'Eliminó un documento'],
   ['PATCH', /^\/api\/profile\/?$/, 'profile.update', 'Actualizó su perfil'],
   ['POST', /^\/api\/profile\/avatar$/, 'profile.avatar', 'Cambió su foto de perfil'],
@@ -151,7 +152,9 @@ const auditMiddleware = (req, res, next) => {
       requestId: req.id,
       method: req.method,
       path,
-      detail: res.statusCode >= 400 && body.error ? { error: String(body.error).slice(0, 200) } : null,
+      detail: res.statusCode >= 400 && body.error
+        ? { error: String(body.error).slice(0, 200) }
+        : (res.locals.auditDetail || null),
     });
   });
 

@@ -8,6 +8,7 @@ const {
   getDocument,
   reanalyzeDocument,
   updateDocumentMeta,
+  replaceDocumentFile,
   deleteDocument,
   getStats,
 } = require('../controllers/documentController');
@@ -35,6 +36,7 @@ router.get('/', getDocuments);
 router.get('/:id', getDocument);
 router.post('/:id/reanalyze', reanalyzeDocument);
 router.patch('/:id', updateDocumentMeta);
+router.put('/:id/file', upload.single('file'), replaceDocumentFile);
 router.delete('/:id', deleteDocument);
 
 module.exports = router;

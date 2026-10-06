@@ -374,11 +374,13 @@ const getDocuments = async (req, res) => {
         OR metadata->>'category' ILIKE $${i} OR metadata->>'ai_category' ILIKE $${i}
         OR metadata->>'author' ILIKE $${i} OR metadata->>'ai_description' ILIKE $${i}
         OR metadata->>'ai_summary' ILIKE $${i} OR metadata->>'doc_title' ILIKE $${i}
-        OR metadata->>'subject' ILIKE $${i})`;
+        OR metadata->>'subject' ILIKE $${i} OR metadata->>'user_description' ILIKE $${i}
+        OR metadata->>'tags' ILIKE $${i} OR metadata->>'ai_tags' ILIKE $${i})`;
       params.push(`%${search}%`); i++;
     }
     if (category && category !== 'Todos') {
-      query += ` AND (metadata->>'category' = $${i} OR metadata->>'ai_category' = $${i})`;
+      query += ` AND (CASE WHEN metadata->>'category_source' = 'manual' THEN metadata->>'category'
+        ELSE COALESCE(metadata->>'ai_category', metadata->>'category') END) = $${i}`;
       params.push(category); i++;
     }
     if (status && status !== 'Todos') { query += ` AND status = $${i}`; params.push(status); i++; }
@@ -418,20 +420,208 @@ const reanalyzeDocument = async (req, res) => {
   } catch (err) { return res.status(500).json({ error: 'Error al re-analizar' }); }
 };
 
+// ─────────────────────────────────────────
+// EDICIÓN DE DOCUMENTOS
+// ─────────────────────────────────────────
+const CONFIDENTIALITY_LEVELS = ['Público', 'Interno', 'Confidencial', 'Secreto'];
+const ALLOWED_MIMES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
+const IN_CHAIN = ['sending', 'confirming'];
+
+// Lo que la app muestra: lo editado a mano tiene prioridad sobre lo que propuso la IA
+const shownCategory = (m) => (m.category_source === 'manual' ? m.category : (m.ai_category || m.category)) || 'Documento';
+const shownTags = (m) => (m.tags_source === 'manual' ? m.tags : (m.ai_tags || m.tags)) || [];
+
+const cleanTags = (raw) => {
+  const list = Array.isArray(raw) ? raw : String(raw || '').split(',');
+  const out = [];
+  for (const t of list) {
+    const v = String(t).trim().toLowerCase().replace(/^#+/, '').replace(/\s+/g, '-').slice(0, 30);
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out.slice(0, 15);
+};
+
+const pushHistory = (meta, entry) =>
+  [entry, ...(Array.isArray(meta.edit_history) ? meta.edit_history : [])].slice(0, 20);
+
+/**
+ * PATCH /api/documents/:id
+ * Edita nombre, descripción, categoría, etiquetas y confidencialidad.
+ * No toca el archivo ni su huella: por eso también se permite en documentos firmados.
+ */
 const updateDocumentMeta = async (req, res) => {
   try {
     const { id } = req.params;
-    const { category, tags, title } = req.body;
-    const check = await pool.query('SELECT id FROM documents WHERE id = $1 AND user_id = $2', [id, req.user.id]);
-    if (!check.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
-    if (title) await pool.query('UPDATE documents SET title = $1 WHERE id = $2', [title, id]);
-    const updates = { manually_edited: true, last_edited_at: new Date().toISOString() };
-    if (category) updates.category = category;
-    if (tags) updates.tags = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
-    await pool.query(`UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`, [JSON.stringify(updates), id]);
-    const updated = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
-    return res.json({ message: 'Documento actualizado', document: updated.rows[0] });
-  } catch (err) { return res.status(500).json({ error: 'Error al actualizar' }); }
+    const found = await pool.query('SELECT id, title, status, metadata FROM documents WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (!found.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
+
+    const doc = found.rows[0];
+    const meta = doc.metadata || {};
+    const b = req.body || {};
+    const changed = [];
+    const updates = {};
+    let newTitle = null;
+
+    if (b.title !== undefined) {
+      let t = String(b.title || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
+      if (!t) return res.status(400).json({ error: 'El nombre del documento no puede quedar vacío' });
+      const ext = meta.extension ? `.${meta.extension}` : '';
+      if (ext && !t.toLowerCase().endsWith(ext.toLowerCase())) t += ext;
+      if (t !== doc.title) { newTitle = t; changed.push('nombre'); }
+    }
+
+    if (b.description !== undefined) {
+      const d = String(b.description || '').trim().slice(0, 1000);
+      if (d !== (meta.user_description || '')) { updates.user_description = d; changed.push('descripción'); }
+    }
+
+    if (b.category !== undefined) {
+      const c = String(b.category || '').trim().slice(0, 40);
+      if (!c) return res.status(400).json({ error: 'Elige una categoría' });
+      if (c !== shownCategory(meta)) {
+        updates.category = c;
+        updates.category_source = 'manual';
+        changed.push('categoría');
+      }
+    }
+
+    if (b.tags !== undefined) {
+      const tags = cleanTags(b.tags);
+      if (JSON.stringify(tags) !== JSON.stringify(shownTags(meta))) {
+        updates.tags = tags;
+        updates.tags_source = 'manual';
+        changed.push('etiquetas');
+      }
+    }
+
+    if (b.confidentiality !== undefined) {
+      const level = String(b.confidentiality || '').trim();
+      if (!CONFIDENTIALITY_LEVELS.includes(level))
+        return res.status(400).json({ error: `Confidencialidad no válida. Usa: ${CONFIDENTIALITY_LEVELS.join(', ')}` });
+      if (level !== (meta.confidentiality || meta.ai_confidentiality)) {
+        updates.confidentiality = level;
+        changed.push('confidencialidad');
+      }
+    }
+
+    if (!changed.length) {
+      const current = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
+      return res.json({ message: 'No había cambios para guardar', changed: [], document: current.rows[0] });
+    }
+
+    const now = new Date().toISOString();
+    updates.manually_edited = true;
+    updates.last_edited_at = now;
+    updates.edit_history = pushHistory(meta, { at: now, fields: changed, by: req.user.email || null });
+
+    const updated = await pool.query(
+      `UPDATE documents SET title = COALESCE($1, title), metadata = metadata || $2::jsonb, updated_at = NOW()
+       WHERE id = $3 RETURNING *`,
+      [newTitle, JSON.stringify(updates), id]
+    );
+
+    res.locals.auditDetail = { fields: changed };
+    return res.json({ message: 'Documento actualizado', changed, document: updated.rows[0] });
+  } catch (err) {
+    console.error('ERROR UPDATE DOC:', err);
+    return res.status(500).json({ error: 'Error al actualizar el documento' });
+  }
+};
+
+/**
+ * PUT /api/documents/:id/file
+ * Sube una nueva versión del archivo. Solo mientras el documento NO esté firmado:
+ * una vez firmado, su huella SHA-256 está anclada en blockchain y no puede cambiar.
+ * Conserva lo editado a mano y guarda la versión anterior en metadata.versions.
+ * ?analyze=0 → no lanza la IA aquí (la app la lanza para mostrar el proceso).
+ */
+const replaceDocumentFile = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo' });
+    const { id } = req.params;
+    const found = await pool.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (!found.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
+
+    const doc = found.rows[0];
+    const meta = doc.metadata || {};
+    if (doc.status !== 'pending')
+      return res.status(409).json({ error: 'El documento ya está firmado: su huella está registrada en blockchain y el archivo no se puede reemplazar. Sube un documento nuevo.' });
+    if (IN_CHAIN.includes(meta.blockchain_status))
+      return res.status(409).json({ error: 'La firma de este documento se está registrando en blockchain. Espera a que termine.' });
+
+    const { originalname, mimetype, size, buffer } = req.file;
+    if (!ALLOWED_MIMES.includes(mimetype)) return res.status(400).json({ error: 'Solo se permiten archivos PDF o Word' });
+    if (size > 10 * 1024 * 1024) return res.status(400).json({ error: 'El archivo no puede superar 10MB' });
+
+    const fileHash = crypto.createHash('sha256').update(buffer).digest('hex');
+    if (fileHash === doc.file_hash)
+      return res.status(400).json({ error: 'Es exactamente el mismo archivo (la huella SHA-256 no cambió).' });
+
+    const fileName = `${req.user.id}/${Date.now()}_${sanitizeFileName(originalname)}`;
+    const { error: storageError } = await supabase.storage
+      .from('documents')
+      .upload(fileName, buffer, { contentType: mimetype, upsert: false });
+    if (storageError) {
+      console.error('STORAGE ERROR (reemplazo):', storageError);
+      return res.status(500).json({ error: 'Error al subir el archivo' });
+    }
+    const { data: urlData } = supabase.storage.from('documents').getPublicUrl(fileName);
+    const extracted = await extractMetadata(buffer, mimetype, originalname, size);
+
+    // Lo que el usuario editó a mano se conserva; lo de la IA se recalcula
+    const keep = {};
+    if (meta.category_source === 'manual') Object.assign(keep, { category: meta.category, category_source: 'manual' });
+    if (meta.tags_source === 'manual') Object.assign(keep, { tags: meta.tags, tags_source: 'manual' });
+    if (meta.user_description) keep.user_description = meta.user_description;
+    if (meta.confidentiality) keep.confidentiality = meta.confidentiality;
+
+    const now = new Date().toISOString();
+    const version = (parseInt(meta.version, 10) || 1) + 1;
+    const versions = [
+      {
+        version: version - 1,
+        file_hash: doc.file_hash,
+        file_url: doc.file_url,
+        name: meta.original_name || doc.title,
+        size_mb: meta.size_mb ?? null,
+        uploaded_at: meta.uploaded_at || doc.created_at,
+        replaced_at: now,
+      },
+      ...(Array.isArray(meta.versions) ? meta.versions : []),
+    ].slice(0, 10);
+
+    const newMeta = {
+      ...extracted,
+      ...keep,
+      version,
+      versions,
+      manually_edited: true,
+      last_edited_at: now,
+      edit_history: pushHistory(meta, { at: now, fields: [`archivo (v${version})`], by: req.user.email || null }),
+    };
+
+    // Si el nombre nunca se cambió a mano, se usa el del archivo nuevo
+    const renamedByUser = meta.original_name && doc.title !== meta.original_name;
+    const title = renamedByUser ? doc.title : originalname;
+
+    const updated = await pool.query(
+      `UPDATE documents SET title = $1, file_url = $2, file_hash = $3, metadata = $4::jsonb, updated_at = NOW()
+       WHERE id = $5 RETURNING *`,
+      [title, urlData.publicUrl, fileHash, JSON.stringify(newMeta), id]
+    );
+
+    if (String(req.query.analyze) !== '0') generateDescriptionWithGroq(id, newMeta).catch(console.error);
+
+    res.locals.auditDetail = { version, previous_hash: doc.file_hash.slice(0, 16), new_hash: fileHash.slice(0, 16) };
+    return res.json({ message: `Archivo reemplazado. Ahora es la versión ${version}.`, version, document: updated.rows[0] });
+  } catch (err) {
+    console.error('ERROR REPLACE FILE:', err);
+    return res.status(500).json({ error: 'Error al reemplazar el archivo' });
+  }
 };
 
 const deleteDocument = async (req, res) => {
@@ -474,7 +664,7 @@ const getStats = async (req, res) => {
          FROM documents WHERE user_id = $1`, [uid]
       ),
       pool.query(
-        `SELECT COALESCE(NULLIF(metadata->>'ai_confidentiality',''), 'Sin analizar') AS level, COUNT(*)::int AS n
+        `SELECT COALESCE(NULLIF(metadata->>'confidentiality',''), NULLIF(metadata->>'ai_confidentiality',''), 'Sin analizar') AS level, COUNT(*)::int AS n
            FROM documents WHERE user_id = $1 GROUP BY 1 ORDER BY 2 DESC`, [uid]
       ),
       pool.query(
@@ -520,6 +710,7 @@ module.exports = {
   getDocument,
   reanalyzeDocument,
   updateDocumentMeta,
+  replaceDocumentFile,
   deleteDocument,
   getStats,
   // usados por el asistente IA

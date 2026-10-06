@@ -140,7 +140,8 @@ const docBrief = (d) => {
     title: d.title,
     status: STATUS_ES[d.status] || d.status,
     in_blockchain_process: ['sending', 'confirming'].includes(m.blockchain_status),
-    category: m.ai_category || m.category || null,
+    category: (m.category_source === 'manual' ? m.category : (m.ai_category || m.category)) || null,
+    description: m.user_description || undefined,
     uploaded: d.created_at,
     pages: m.pages || null,
   };
@@ -296,7 +297,7 @@ const runTool = async (name, args, user, ui) => {
         description: m.ai_description || null,
         summary: m.ai_summary || null,
         tags: m.ai_tags || [],
-        confidentiality: m.ai_confidentiality || null,
+        confidentiality: m.confidentiality || m.ai_confidentiality || null,
         author: m.author || null,
         words: m.word_count || null,
         sha256: d.file_hash,
