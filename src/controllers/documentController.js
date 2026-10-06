@@ -164,9 +164,38 @@ const explainGroqError = (err) => {
   if (err?.status === 401 || code === 'invalid_api_key')
     return 'GROQ_API_KEY inválida o revocada. Crea una nueva en https://console.groq.com/keys y ponla en el .env (las claves publicadas en GitHub se revocan solas).';
   if (err?.status === 429) return 'Límite de uso de Groq alcanzado; intenta de nuevo en unos minutos.';
+  if (code === 'json_validate_failed' || /no devolvió JSON/i.test(err?.message || ''))
+    return 'La IA no logró generar una respuesta válida para este documento. Intenta analizarlo de nuevo.';
   if (['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes(err?.cause?.code || err?.code))
     return 'No hay conexión con api.groq.com (red o firewall).';
   return err?.message || String(err);
+};
+
+// Groq devuelve 400 "json_validate_failed" cuando el modelo no produce JSON
+// (pasa sobre todo con modelos de razonamiento que gastan los tokens pensando).
+const isJsonError = (err) => groqErrorCode(err) === 'json_validate_failed' || /JSON/i.test(err?.message || '');
+
+/**
+ * Pide una respuesta JSON a un modelo:
+ * 1) con response_format json_object; 2) si falla la validación, sin él,
+ * extrayendo el JSON del texto. Si tampoco sale, lanza el error.
+ */
+const groqJson = async (model, messages, maxTokens = 1500, temperature = 0.3) => {
+  const base = { model, messages, max_tokens: maxTokens, temperature };
+  // Los modelos gpt-oss razonan antes de responder: que piensen poco
+  if (/gpt-oss/i.test(model)) base.reasoning_effort = 'low';
+  try {
+    const c = await groq.chat.completions.create({ ...base, response_format: { type: 'json_object' } });
+    return parseJsonLoose(c.choices[0]?.message?.content);
+  } catch (err) {
+    if (!isJsonError(err)) throw err;
+    console.warn(`⚠️ [IA] ${model} no devolvió JSON válido; reintentando sin modo JSON…`);
+    const c = await groq.chat.completions.create({
+      ...base,
+      messages: [...messages, { role: 'user', content: 'Responde únicamente con el objeto JSON, sin texto adicional.' }],
+    });
+    return parseJsonLoose(c.choices[0]?.message?.content);
+  }
 };
 
 const isModelError = (err) => {
@@ -224,15 +253,7 @@ Responde con este JSON exacto:
   for (const model of GROQ_MODELS) {
     try {
       await setAiStage(docId, 'thinking', { ai_trying_model: model });
-      const completion = await groq.chat.completions.create({
-        messages: [{ role: 'user', content: prompt }],
-        model,
-        max_tokens: 700,
-        temperature: 0.3,
-        response_format: { type: 'json_object' },
-      });
-
-      const aiData = parseJsonLoose(completion.choices[0]?.message?.content);
+      const aiData = await groqJson(model, [{ role: 'user', content: prompt }], 1500);
 
       await pool.query(
         `UPDATE documents SET metadata = (metadata - 'ai_error') || $1::jsonb WHERE id = $2`,
@@ -254,6 +275,10 @@ Responde con este JSON exacto:
       lastErr = err;
       if (isModelError(err)) {
         console.warn(`⚠️ [IA] Modelo ${model} no disponible (${groqErrorCode(err) || err.status}); probando el siguiente…`);
+        continue;
+      }
+      if (isJsonError(err)) {
+        console.warn(`⚠️ [IA] ${model} no generó un JSON válido; probando el siguiente modelo…`);
         continue;
       }
       break; // clave inválida, red, límite, JSON…: no sirve cambiar de modelo
@@ -436,4 +461,6 @@ module.exports = {
   explainGroqError,
   isModelError,
   parseJsonLoose,
+  groqJson,
+  isJsonError,
 };

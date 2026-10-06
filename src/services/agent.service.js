@@ -14,7 +14,8 @@ const {
   GROQ_MODELS,
   explainGroqError,
   isModelError,
-  parseJsonLoose,
+  groqJson,
+  isJsonError,
 } = require('../controllers/documentController');
 const { buildVerification } = require('../controllers/signing.controller');
 const { getNetworkInfo } = require('./blockchain.service');
@@ -175,7 +176,8 @@ const chat = async (payload) => {
   let lastErr;
   for (const model of GROQ_MODELS) {
     try {
-      const completion = await groq.chat.completions.create({ model, ...payload });
+      const extra = /gpt-oss/i.test(model) ? { reasoning_effort: 'low' } : {};
+      const completion = await groq.chat.completions.create({ model, ...extra, ...payload });
       return { completion, model };
     } catch (err) {
       lastErr = err;
@@ -196,11 +198,7 @@ const reviewDocument = async (doc) => {
   const text = await getDocumentText(doc);
   if (!text) return { error: 'El documento no tiene texto legible (puede ser un escaneo).' };
 
-  const { completion } = await chat({
-    temperature: 0.2,
-    max_tokens: 1200,
-    response_format: { type: 'json_object' },
-    messages: [
+  const reviewMessages = [
       {
         role: 'system',
         content:
@@ -224,10 +222,20 @@ Máximo 5 alertas. Listas vacías si no aplica.
 TEXTO:
 """${text.slice(0, 14000)}"""`,
       },
-    ],
-  });
-
-  const review = parseJsonLoose(completion.choices[0].message.content);
+    ];
+  let review;
+  let lastErr;
+  for (const model of GROQ_MODELS) {
+    try {
+      review = await groqJson(model, reviewMessages, 2000, 0.2);
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (isModelError(err) || isJsonError(err)) continue;
+      throw err;
+    }
+  }
+  if (!review) throw lastErr;
   review.reviewed_at = new Date().toISOString();
   await pool.query(
     `UPDATE documents SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2`,
