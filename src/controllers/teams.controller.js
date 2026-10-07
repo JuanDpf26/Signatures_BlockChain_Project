@@ -85,7 +85,7 @@ const getTeam = async (req, res) => {
         [id]
       ),
     ]);
-    return res.json({ team: { ...t.rows[0], my_role: role }, members: m.rows, documents: docs.rows });
+    return res.json({ team: { ...t.rows[0], my_role: role, my_user_id: String(req.user.id) }, members: m.rows, documents: docs.rows });
   } catch (err) {
     console.error('ERROR GET TEAM:', err.message);
     return res.status(500).json({ error: 'No se pudo cargar el equipo' });
