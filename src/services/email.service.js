@@ -66,7 +66,7 @@ const escapeHtml = (str = '') =>
     .replace(/'/g, '&#39;');
 
 // Envío genérico: intenta 465 y, si es un problema de red, reintenta por 587
-const sendEmail = async ({ to, subject, html, text, link, attachments, replyTo }) => {
+const sendEmail = async ({ to, bcc, subject, html, text, link, attachments, replyTo }) => {
   if (link) console.log(`[email] Enlace para ${to}: ${link}`); // siempre visible, aunque el correo falle
   const problem = configProblem();
   if (problem) {
@@ -77,6 +77,7 @@ const sendEmail = async ({ to, subject, html, text, link, attachments, replyTo }
   const message = { from: `"BlockSign" <${user}>`, to, subject, html, text };
   if (attachments?.length) message.attachments = attachments;
   if (replyTo) message.replyTo = replyTo;
+  if (bcc) message.bcc = bcc;
 
   let lastErr;
   for (const port of [465, 587]) {
@@ -419,7 +420,7 @@ const sendDocumentSignedEmail = async (email, name, info) => {
  * Incluye el archivo adjunto (o un enlace), su huella SHA-256 y, si está firmado,
  * los datos del registro en blockchain y un enlace para verificarlo sin cuenta.
  */
-const sendDocumentEmail = async ({ to, sender, doc, message, subject, attachment }) => {
+const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attachment, kind = 'info', inApp = false }) => {
   const { title, hash, signed, txHash, blockNumber, explorerUrl, signedAt, fileUrl } = doc;
   const verifyLink = `${cfg().frontend}/#/verify?hash=${encodeURIComponent(hash || '')}`;
   const safeTitle = escapeHtml(title);
@@ -439,11 +440,14 @@ const sendDocumentEmail = async ({ to, sender, doc, message, subject, attachment
     if (signedAt) rows.push(['Firmado', fmtDate(signedAt)]);
   }
 
+  const review = kind === 'review';
+  const appLink = `${cfg().frontend}/#/login`;
   return sendEmail({
     to,
+    bcc,
     replyTo: sender.email,
     attachments: attachment ? [attachment] : undefined,
-    subject: subject || `${sender.name || sender.email} te compartió "${title}"`,
+    subject: subject || (review ? `${sender.name || sender.email} te pidió revisar "${title}"` : `${sender.name || sender.email} te compartió "${title}"`),
     text:
       `${sender.name || sender.email} (${sender.email}) te compartió "${title}" por BlockSign.\n\n` +
       (message ? `Mensaje:\n${message}\n\n` : '') +
@@ -456,10 +460,13 @@ const sendDocumentEmail = async ({ to, sender, doc, message, subject, attachment
       preheader: `${sender.name || sender.email} te compartió un documento`,
       accent: signed ? C.success : C.primary,
       icon: '📄',
-      eyebrow: 'Documento compartido',
-      title: `Te compartieron “${safeTitle}”`,
+      eyebrow: review ? 'Solicitud de revisión' : 'Documento compartido',
+      title: review ? `Te pidieron revisar “${safeTitle}”` : `Te compartieron “${safeTitle}”`,
       body: `
-        ${p(`<strong>${safeSender}</strong> te envió este documento a través de BlockSign.`)}
+        ${p(review
+          ? `<strong>${safeSender}</strong> te envió este documento para que lo <strong>revises y lo apruebes o rechaces</strong>.`
+          : `<strong>${safeSender}</strong> te envió este documento a través de BlockSign.`)}
+        ${inApp ? callout(`También está en tu <strong>bandeja de entrada</strong> de BlockSign${review ? ', donde puedes aprobarlo o rechazarlo' : ''}. <a href="${appLink}" style="color:${C.primary};font-weight:700;">Abrir BlockSign</a>`, C.primary, '📥') : ''}
         ${note ? callout(note, C.primary, '💬') : ''}
         ${dataTable(rows)}
         ${attachment
@@ -479,6 +486,30 @@ const sendDocumentEmail = async ({ to, sender, doc, message, subject, attachment
   });
 };
 
+/** Aviso al remitente: alguien aprobó o rechazó un documento que envió para revisión */
+const sendShareResponseEmail = async ({ to, senderName, reviewer, title, decision, comment }) => {
+  const ok = decision === 'approved';
+  const safeTitle = escapeHtml(title);
+  const who = escapeHtml(reviewer.name || reviewer.email);
+  return sendEmail({
+    to,
+    replyTo: reviewer.email,
+    subject: `${reviewer.name || reviewer.email} ${ok ? 'aprobó' : 'rechazó'} "${title}"`,
+    text: `${reviewer.name || reviewer.email} ${ok ? 'aprobó' : 'rechazó'} "${title}".${comment ? `\n\nComentario: ${comment}` : ''}`,
+    html: layout({
+      preheader: `${ok ? 'Aprobado' : 'Rechazado'}: ${title}`,
+      accent: ok ? C.success : C.danger || '#D32F2F',
+      icon: ok ? '✅' : '↩️',
+      eyebrow: 'Respuesta a tu solicitud',
+      title: ok ? 'Documento aprobado' : 'Documento rechazado',
+      body: `
+        ${p(`Hola <strong>${escapeHtml(senderName || '')}</strong>, <strong>${who}</strong> ${ok ? 'aprobó' : 'rechazó'} <strong>“${safeTitle}”</strong>.`)}
+        ${comment ? callout(escapeHtml(comment).replace(/\r?\n/g, '<br>'), ok ? C.success : C.warning, '💬') : ''}
+        ${button(`${cfg().frontend}/#/login`, 'Ver en mi bandeja')}`,
+    }),
+  });
+};
+
 module.exports = {
   sendVerificationEmail,
   sendWelcomeEmail,
@@ -486,5 +517,6 @@ module.exports = {
   sendPasswordChangedEmail,
   sendDocumentSignedEmail,
   sendDocumentEmail,
+  sendShareResponseEmail,
   verifyEmailTransport,
 };

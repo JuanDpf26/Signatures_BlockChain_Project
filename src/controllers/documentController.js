@@ -640,25 +640,57 @@ const sendDocumentByEmail = async (req, res) => {
     const { id } = req.params;
     const b = req.body || {};
     const raw = Array.isArray(b.recipients) ? b.recipients : String(b.recipients || '').split(/[,;\s]+/);
-    const recipients = [...new Set(raw.map((e) => String(e).trim().toLowerCase()).filter(Boolean))];
-    if (!recipients.length) return res.status(400).json({ error: 'Escribe al menos un correo de destino' });
-    if (recipients.length > 5) return res.status(400).json({ error: 'Puedes enviar a máximo 5 personas a la vez' });
-    const bad = recipients.filter((e) => !EMAIL_RE.test(e) || e.length > 120);
+    const emails = [...new Set(raw.map((e) => String(e).trim().toLowerCase()).filter(Boolean))];
+    const teamIds = [...new Set((Array.isArray(b.teams) ? b.teams : []).map(String).filter((t) => /^[0-9a-f-]{36}$/i.test(t)))];
+    if (!emails.length && !teamIds.length) return res.status(400).json({ error: 'Escribe al menos un correo o elige un equipo' });
+    if (emails.length > 5) return res.status(400).json({ error: 'Puedes escribir máximo 5 correos a la vez (para más personas, usa un equipo)' });
+    const bad = emails.filter((e) => !EMAIL_RE.test(e) || e.length > 120);
     if (bad.length) return res.status(400).json({ error: `Correo no válido: ${bad.join(', ')}` });
 
+    const kind = b.kind === 'review' ? 'review' : 'info';
     const message = String(b.message || '').trim().slice(0, 2000);
     const subject = String(b.subject || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 150);
     const wantAttach = b.attach !== false;
 
     const [found, me] = await Promise.all([
       pool.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [id, req.user.id]),
-      pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id]),
+      pool.query('SELECT id, name, email FROM users WHERE id = $1', [req.user.id]),
     ]);
     if (!found.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
     const doc = found.rows[0];
     const meta = doc.metadata || {};
     const sender = me.rows[0] || { name: null, email: null };
     if (!sender.email) return res.status(400).json({ error: 'Tu cuenta no tiene un correo registrado' });
+    const myEmail = sender.email.toLowerCase();
+
+    // Destinatarios: correos escritos + miembros de los equipos elegidos (sin repetir y sin incluirte)
+    const recipients = new Map(); // email -> { email, userId, name, teamId }
+    if (emails.length) {
+      const reg = await pool.query('SELECT id, name, email FROM users WHERE lower(email) = ANY($1)', [emails]);
+      const byEmail = Object.fromEntries(reg.rows.map((u) => [u.email.toLowerCase(), u]));
+      for (const e of emails) {
+        if (e === myEmail) continue;
+        recipients.set(e, { email: e, userId: byEmail[e] ? String(byEmail[e].id) : null, name: byEmail[e]?.name || null, teamId: null });
+      }
+    }
+    const teamNames = [];
+    for (const t of teamIds) {
+      const mine = await pool.query('SELECT t.name FROM teams t JOIN team_members m ON m.team_id = t.id WHERE t.id = $1 AND m.user_id = $2', [t, String(req.user.id)]);
+      if (!mine.rows.length) return res.status(403).json({ error: 'Solo puedes enviar a equipos de los que eres parte' });
+      teamNames.push(mine.rows[0].name);
+      const mem = await pool.query(
+        'SELECT u.id, u.name, u.email FROM team_members m JOIN users u ON u.id::text = m.user_id WHERE m.team_id = $1',
+        [t]
+      );
+      for (const u of mem.rows) {
+        const e = String(u.email || '').toLowerCase();
+        if (!e || e === myEmail || recipients.has(e)) continue;
+        recipients.set(e, { email: e, userId: String(u.id), name: u.name, teamId: t });
+      }
+    }
+    const list = [...recipients.values()];
+    if (!list.length) return res.status(400).json({ error: 'No hay a quién enviarlo (el equipo solo te tiene a ti)' });
+    if (list.length > 50) return res.status(400).json({ error: 'Máximo 50 destinatarios por envío' });
 
     // Adjuntar el archivo (si no es muy grande); si no, se manda el enlace de descarga
     let attachment = null;
@@ -683,27 +715,52 @@ const sendDocumentByEmail = async (req, res) => {
     }
 
     const signed = ['signed', 'verified'].includes(doc.status);
-    await sendDocumentEmail({
-      to: recipients.join(', '),
-      sender,
-      subject,
-      message,
-      attachment,
-      doc: {
-        title: doc.title,
-        hash: doc.file_hash,
-        signed,
-        txHash: meta.blockchain_tx || doc.blockchain_tx || null,
-        blockNumber: meta.blockchain_block ?? null,
-        explorerUrl: meta.blockchain_explorer || null,
-        signedAt: meta.signed_at || null,
-        fileUrl: doc.file_url,
-      },
-    });
+    const docInfo = {
+      title: doc.title,
+      hash: doc.file_hash,
+      signed,
+      txHash: meta.blockchain_tx || doc.blockchain_tx || null,
+      blockNumber: meta.blockchain_block ?? null,
+      explorerUrl: meta.blockchain_explorer || null,
+      signedAt: meta.signed_at || null,
+      fileUrl: doc.file_url,
+    };
+
+    // Correo: personas con cuenta (también lo verán en su bandeja) y personas sin cuenta.
+    // Con varios destinatarios se usa copia oculta para no exponer los correos de todos.
+    const inApp = list.filter((r) => r.userId).map((r) => r.email);
+    const outside = list.filter((r) => !r.userId).map((r) => r.email);
+    const groups = [[inApp, true], [outside, false]].filter(([g]) => g.length);
+    for (const [g, isIn] of groups) {
+      await sendDocumentEmail({
+        to: g.length === 1 ? g[0] : sender.email,
+        bcc: g.length === 1 ? undefined : g.join(', '),
+        sender, subject, message, attachment, kind, inApp: isIn, doc: docInfo,
+      });
+    }
+
+    // Bandeja de entrada: un registro por destinatario, agrupados por envío (batch)
+    const batch = crypto.randomUUID();
+    try {
+      const values = [];
+      const params = [];
+      list.forEach((r, i) => {
+        const o = i * 10;
+        values.push(`($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10})`);
+        params.push(batch, String(doc.id), String(req.user.id), r.userId, r.email, r.teamId, subject || null, message || null, kind, !!attachment);
+      });
+      await pool.query(
+        `INSERT INTO document_shares (batch_id, document_id, sender_id, recipient_id, recipient_email, team_id, subject, message, kind, attached)
+         VALUES ${values.join(',')}`,
+        params
+      );
+    } catch (e) {
+      console.error('[bandeja] No se pudo guardar el envío en la bandeja:', e.message);
+    }
 
     const now = new Date().toISOString();
     const shares = [
-      { at: now, to: recipients, attached: !!attachment, signed },
+      { at: now, to: list.map((r) => r.email), teams: teamNames, kind, attached: !!attachment, signed },
       ...(Array.isArray(meta.shares) ? meta.shares : []),
     ].slice(0, 30);
     await pool.query(`UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`, [
@@ -711,10 +768,13 @@ const sendDocumentByEmail = async (req, res) => {
       id,
     ]);
 
-    res.locals.auditDetail = { recipients, attached: !!attachment, signed };
+    res.locals.auditDetail = { recipients: list.length, in_app: inApp.length, teams: teamNames, kind, attached: !!attachment };
     return res.json({
-      message: `Documento enviado a ${recipients.length} persona${recipients.length === 1 ? '' : 's'}`,
-      sent_to: recipients,
+      message: `Documento enviado a ${list.length} persona${list.length === 1 ? '' : 's'}`,
+      sent_to: list.map((r) => r.email),
+      in_app: inApp.length,
+      teams: teamNames,
+      kind,
       attached: !!attachment,
       note: attachNote,
       shares,
