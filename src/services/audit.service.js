@@ -83,6 +83,7 @@ const RULES = [
   ['POST', /^\/api\/documents\/upload$/, 'document.upload', 'Subió un documento'],
   ['POST', new RegExp(`^/api/documents/${UUID}/reanalyze$`), 'document.reanalyze', 'Solicitó análisis con IA'],
   ['PATCH', new RegExp(`^/api/documents/${UUID}$`), 'document.update', 'Editó los datos de un documento'],
+  ['POST', new RegExp(`^/api/documents/${UUID}/send$`), 'document.send', 'Envió un documento por correo'],
   ['PUT', new RegExp(`^/api/documents/${UUID}/file$`), 'document.replace_file', 'Reemplazó el archivo de un documento (nueva versión)'],
   ['DELETE', new RegExp(`^/api/documents/${UUID}$`), 'document.delete', 'Eliminó un documento'],
   ['PATCH', /^\/api\/profile\/?$/, 'profile.update', 'Actualizó su perfil'],

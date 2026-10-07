@@ -8,6 +8,7 @@ const Groq = require('groq-sdk');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const { logAudit } = require('../services/audit.service');
+const { sendDocumentEmail } = require('../services/email.service');
 
 const sanitizeFileName = (originalname) => {
   const ext = originalname.split('.').pop().toLowerCase();
@@ -516,7 +517,7 @@ const updateDocumentMeta = async (req, res) => {
     const now = new Date().toISOString();
     updates.manually_edited = true;
     updates.last_edited_at = now;
-    updates.edit_history = pushHistory(meta, { at: now, fields: changed, by: req.user.email || null });
+    updates.edit_history = pushHistory(meta, { at: now, fields: changed, by: req.user.id });
 
     const updated = await pool.query(
       `UPDATE documents SET title = COALESCE($1, title), metadata = metadata || $2::jsonb, updated_at = NOW()
@@ -601,7 +602,7 @@ const replaceDocumentFile = async (req, res) => {
       versions,
       manually_edited: true,
       last_edited_at: now,
-      edit_history: pushHistory(meta, { at: now, fields: [`archivo (v${version})`], by: req.user.email || null }),
+      edit_history: pushHistory(meta, { at: now, fields: [`archivo (v${version})`], by: req.user.id }),
     };
 
     // Si el nombre nunca se cambió a mano, se usa el del archivo nuevo
@@ -621,6 +622,111 @@ const replaceDocumentFile = async (req, res) => {
   } catch (err) {
     console.error('ERROR REPLACE FILE:', err);
     return res.status(500).json({ error: 'Error al reemplazar el archivo' });
+  }
+};
+
+// ─────────────────────────────────────────
+// ENVIAR DOCUMENTO POR CORREO
+// ─────────────────────────────────────────
+const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[a-z]{2,}$/i;
+const MAX_ATTACH_BYTES = 15 * 1024 * 1024; // Gmail acepta hasta 25 MB; dejamos margen
+
+/**
+ * POST /api/documents/:id/send
+ * body: { recipients: string[] (1–5), message?: string, subject?: string, attach?: boolean }
+ */
+const sendDocumentByEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const b = req.body || {};
+    const raw = Array.isArray(b.recipients) ? b.recipients : String(b.recipients || '').split(/[,;\s]+/);
+    const recipients = [...new Set(raw.map((e) => String(e).trim().toLowerCase()).filter(Boolean))];
+    if (!recipients.length) return res.status(400).json({ error: 'Escribe al menos un correo de destino' });
+    if (recipients.length > 5) return res.status(400).json({ error: 'Puedes enviar a máximo 5 personas a la vez' });
+    const bad = recipients.filter((e) => !EMAIL_RE.test(e) || e.length > 120);
+    if (bad.length) return res.status(400).json({ error: `Correo no válido: ${bad.join(', ')}` });
+
+    const message = String(b.message || '').trim().slice(0, 2000);
+    const subject = String(b.subject || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 150);
+    const wantAttach = b.attach !== false;
+
+    const [found, me] = await Promise.all([
+      pool.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [id, req.user.id]),
+      pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id]),
+    ]);
+    if (!found.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
+    const doc = found.rows[0];
+    const meta = doc.metadata || {};
+    const sender = me.rows[0] || { name: null, email: null };
+    if (!sender.email) return res.status(400).json({ error: 'Tu cuenta no tiene un correo registrado' });
+
+    // Adjuntar el archivo (si no es muy grande); si no, se manda el enlace de descarga
+    let attachment = null;
+    let attachNote = null;
+    if (wantAttach) {
+      const sizeBytes = Number(meta.size_bytes) || 0;
+      if (sizeBytes > MAX_ATTACH_BYTES) {
+        attachNote = 'El archivo es muy grande para adjuntarlo; se envió el enlace de descarga.';
+      } else {
+        try {
+          const r = await fetch(doc.file_url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const content = Buffer.from(await r.arrayBuffer());
+          const ext = meta.extension ? `.${meta.extension}` : '';
+          const filename = doc.title.toLowerCase().endsWith(ext.toLowerCase()) ? doc.title : `${doc.title}${ext}`;
+          attachment = { filename, content, contentType: meta.mime_type || undefined };
+        } catch (e) {
+          console.warn('[envío] No se pudo descargar el archivo para adjuntarlo:', e.message);
+          attachNote = 'No se pudo adjuntar el archivo; se envió el enlace de descarga.';
+        }
+      }
+    }
+
+    const signed = ['signed', 'verified'].includes(doc.status);
+    await sendDocumentEmail({
+      to: recipients.join(', '),
+      sender,
+      subject,
+      message,
+      attachment,
+      doc: {
+        title: doc.title,
+        hash: doc.file_hash,
+        signed,
+        txHash: meta.blockchain_tx || doc.blockchain_tx || null,
+        blockNumber: meta.blockchain_block ?? null,
+        explorerUrl: meta.blockchain_explorer || null,
+        signedAt: meta.signed_at || null,
+        fileUrl: doc.file_url,
+      },
+    });
+
+    const now = new Date().toISOString();
+    const shares = [
+      { at: now, to: recipients, attached: !!attachment, signed },
+      ...(Array.isArray(meta.shares) ? meta.shares : []),
+    ].slice(0, 30);
+    await pool.query(`UPDATE documents SET metadata = metadata || $1::jsonb WHERE id = $2`, [
+      JSON.stringify({ shares, last_shared_at: now }),
+      id,
+    ]);
+
+    res.locals.auditDetail = { recipients, attached: !!attachment, signed };
+    return res.json({
+      message: `Documento enviado a ${recipients.length} persona${recipients.length === 1 ? '' : 's'}`,
+      sent_to: recipients,
+      attached: !!attachment,
+      note: attachNote,
+      shares,
+    });
+  } catch (err) {
+    console.error('ERROR SEND DOC:', err);
+    const auth = /Invalid login|EAUTH|535/i.test(`${err.code} ${err.message}`);
+    return res.status(502).json({
+      error: auth
+        ? 'El servidor de correo rechazó el inicio de sesión. Revisa EMAIL_USER y EMAIL_PASS (contraseña de aplicación de Gmail).'
+        : `No se pudo enviar el correo: ${err.message || 'error desconocido'}`,
+    });
   }
 };
 
@@ -711,6 +817,7 @@ module.exports = {
   reanalyzeDocument,
   updateDocumentMeta,
   replaceDocumentFile,
+  sendDocumentByEmail,
   deleteDocument,
   getStats,
   // usados por el asistente IA

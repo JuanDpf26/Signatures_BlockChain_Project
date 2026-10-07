@@ -66,7 +66,7 @@ const escapeHtml = (str = '') =>
     .replace(/'/g, '&#39;');
 
 // Envío genérico: intenta 465 y, si es un problema de red, reintenta por 587
-const sendEmail = async ({ to, subject, html, text, link }) => {
+const sendEmail = async ({ to, subject, html, text, link, attachments, replyTo }) => {
   if (link) console.log(`[email] Enlace para ${to}: ${link}`); // siempre visible, aunque el correo falle
   const problem = configProblem();
   if (problem) {
@@ -75,6 +75,8 @@ const sendEmail = async ({ to, subject, html, text, link }) => {
   }
   const { user } = cfg();
   const message = { from: `"BlockSign" <${user}>`, to, subject, html, text };
+  if (attachments?.length) message.attachments = attachments;
+  if (replyTo) message.replyTo = replyTo;
 
   let lastErr;
   for (const port of [465, 587]) {
@@ -122,17 +124,17 @@ const verifyEmailTransport = async () => {
 // ────────────────────────────────────────────────
 // PLANTILLA BASE
 // Tablas + estilos en línea: así se ve bien en Gmail, Outlook y el celular.
-// Colores de la app: azul #1A73E8 y cian #06B6D4.
+// Colores de la app: azul institucional #0B45B5 y azul medio #1565C0.
 // ────────────────────────────────────────────────
 const C = {
-  primary: '#1A73E8',
-  cyan: '#06B6D4',
+  primary: '#0B45B5',
+  cyan: '#1565C0',
   text: '#202124',
   hint: '#5F6368',
   border: '#E3E8EF',
   page: '#F4F6FA',
-  success: '#16A34A',
-  warning: '#D97706',
+  success: '#2E7D32',
+  warning: '#D99A00',
   danger: '#DC2626',
 };
 const FONT = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
@@ -412,11 +414,77 @@ const sendDocumentSignedEmail = async (email, name, info) => {
   });
 };
 
+/**
+ * Envía un documento a otras personas desde la plataforma.
+ * Incluye el archivo adjunto (o un enlace), su huella SHA-256 y, si está firmado,
+ * los datos del registro en blockchain y un enlace para verificarlo sin cuenta.
+ */
+const sendDocumentEmail = async ({ to, sender, doc, message, subject, attachment }) => {
+  const { title, hash, signed, txHash, blockNumber, explorerUrl, signedAt, fileUrl } = doc;
+  const verifyLink = `${cfg().frontend}/#/verify?hash=${encodeURIComponent(hash || '')}`;
+  const safeTitle = escapeHtml(title);
+  const safeSender = escapeHtml(sender.name || sender.email);
+  const short = (h) => (h && h.length > 26 ? `${h.slice(0, 14)}…${h.slice(-10)}` : h || '—');
+  const note = message ? escapeHtml(message).replace(/\r?\n/g, '<br>') : '';
+
+  const rows = [
+    ['Documento', safeTitle],
+    ['Enviado por', `${safeSender}<br><span style="font-weight:500;color:${C.hint};">${escapeHtml(sender.email)}</span>`],
+    ['Estado', signed ? '✅ Firmado y registrado en blockchain' : '⏳ Pendiente de firma'],
+    ['Huella SHA-256', short(hash), true],
+  ];
+  if (signed) {
+    rows.push(['Bloque', `#${blockNumber ?? '—'}`]);
+    rows.push(['Transacción', short(txHash), true]);
+    if (signedAt) rows.push(['Firmado', fmtDate(signedAt)]);
+  }
+
+  return sendEmail({
+    to,
+    replyTo: sender.email,
+    attachments: attachment ? [attachment] : undefined,
+    subject: subject || `${sender.name || sender.email} te compartió "${title}"`,
+    text:
+      `${sender.name || sender.email} (${sender.email}) te compartió "${title}" por BlockSign.\n\n` +
+      (message ? `Mensaje:\n${message}\n\n` : '') +
+      `Estado: ${signed ? 'firmado y registrado en blockchain' : 'pendiente de firma'}\n` +
+      `Huella SHA-256: ${hash}\n` +
+      (signed ? `Transacción: ${txHash}\nBloque: ${blockNumber}\n` : '') +
+      (attachment ? 'El archivo va adjunto.\n' : `Descargar: ${fileUrl}\n`) +
+      `\nVerifica su autenticidad: ${verifyLink}`,
+    html: layout({
+      preheader: `${sender.name || sender.email} te compartió un documento`,
+      accent: signed ? C.success : C.primary,
+      icon: '📄',
+      eyebrow: 'Documento compartido',
+      title: `Te compartieron “${safeTitle}”`,
+      body: `
+        ${p(`<strong>${safeSender}</strong> te envió este documento a través de BlockSign.`)}
+        ${note ? callout(note, C.primary, '💬') : ''}
+        ${dataTable(rows)}
+        ${attachment
+          ? p(`📎 El archivo va <strong>adjunto</strong> a este correo.`)
+          : button(fileUrl, 'Descargar documento')}
+        ${button(verifyLink, signed ? 'Verificar autenticidad' : 'Ver huella del documento', signed ? C.primary : C.cyan)}
+        ${callout(
+          signed
+            ? 'Para comprobar que nadie lo modificó, abre “Verificar autenticidad” y sube el archivo: BlockSign calcula su huella en tu navegador y la compara con la registrada en blockchain.'
+            : 'Este documento todavía no está firmado. Su huella SHA-256 sirve para comprobar más adelante que el archivo no cambió.',
+          C.cyan,
+          '🔎'
+        )}
+        ${signed && explorerUrl ? p(`También puedes ver la transacción en <a href="${explorerUrl}" style="color:${C.primary};font-weight:700;">Etherscan</a>.`, `font-size:13px;color:${C.hint};`) : ''}
+        ${p('Si no esperabas este correo, puedes ignorarlo. Responder a este mensaje le escribe directamente a quien te lo envió.', `font-size:12px;color:${C.hint};`)}`,
+    }),
+  });
+};
+
 module.exports = {
   sendVerificationEmail,
   sendWelcomeEmail,
   sendPasswordResetEmail,
   sendPasswordChangedEmail,
   sendDocumentSignedEmail,
+  sendDocumentEmail,
   verifyEmailTransport,
 };
