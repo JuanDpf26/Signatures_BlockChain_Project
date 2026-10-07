@@ -21,6 +21,92 @@ let initialized = false;
 // ────────────────────────────────────────────────
 // INICIALIZAR CONEXIÓN
 // ────────────────────────────────────────────────
+const SEPOLIA_CHAIN_ID = 11155111;
+// Nodos públicos de Sepolia que se prueban si el de BLOCKCHAIN_RPC_URL no responde.
+// Se pueden cambiar con BLOCKCHAIN_RPC_FALLBACKS (separados por coma).
+const DEFAULT_FALLBACKS = [
+  'https://ethereum-sepolia-rpc.publicnode.com',
+  'https://sepolia.drpc.org',
+  'https://1rpc.io/sepolia',
+];
+let rpcUrlInUse = null;
+
+// Oculta la clave de API al mostrar la URL en consola (Infura/Alchemy la ponen al final)
+const maskUrl = (url) => {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.replace(/\/([A-Za-z0-9_-]{12,})/g, (m, k) => `/${k.slice(0, 4)}…${k.slice(-3)}`);
+    return `${u.protocol}//${u.host}${path}`;
+  } catch {
+    return '(URL inválida)';
+  }
+};
+
+// Explica en español por qué falló un nodo
+const explainRpc = (err) => {
+  const msg = `${err?.code || ''} ${err?.message || err}`;
+  if (/401|403|unauthori[sz]ed|forbidden|invalid project id|api key|must be authenticated/i.test(msg))
+    return 'el proveedor rechazó la clave (401/403): la API key es inválida, está vencida o no tiene habilitada la red Sepolia';
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(msg)) return 'no se encontró el servidor: la URL está mal escrita o no hay internet';
+  if (/ECONNREFUSED/i.test(msg)) return 'el servidor rechazó la conexión (¿nodo local apagado?)';
+  if (/timeout|ETIMEDOUT/i.test(msg)) return 'el nodo no respondió a tiempo';
+  if (/429|rate limit|too many/i.test(msg)) return 'el proveedor está limitando las peticiones (429)';
+  if (/Invalid URL|invalid url/i.test(msg)) return 'la URL no es válida (debe empezar por https://)';
+  return msg.trim().slice(0, 160);
+};
+
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+// Prueba un nodo: debe responder y ser Sepolia
+const probeRpc = async (url) => {
+  const p = new ethers.JsonRpcProvider(url, SEPOLIA_CHAIN_ID, { staticNetwork: true });
+  try {
+    const hexId = await withTimeout(p.send('eth_chainId', []), 8000);
+    const id = Number(hexId);
+    if (id !== SEPOLIA_CHAIN_ID) throw new Error(`la red de ese nodo es ${id}, no Sepolia (${SEPOLIA_CHAIN_ID})`);
+    await withTimeout(p.getBlockNumber(), 8000);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: explainRpc(err) };
+  } finally {
+    p.destroy();
+  }
+};
+
+const connect = (url) => {
+  // staticNetwork: no intenta "detectar la red" en bucle (evita el mensaje repetido
+  // "JsonRpcProvider failed to detect network and cannot start up; retry in 1s")
+  provider = new ethers.JsonRpcProvider(url, SEPOLIA_CHAIN_ID, { staticNetwork: true });
+  wallet = new ethers.Wallet(process.env.BLOCKCHAIN_PRIVATE_KEY, provider);
+  contract = new ethers.Contract(process.env.BLOCKCHAIN_CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
+  rpcUrlInUse = url;
+};
+
+// Comprueba el nodo configurado y, si falla, pasa a uno público que sí responda
+const checkRpc = async () => {
+  const primary = process.env.BLOCKCHAIN_RPC_URL.trim();
+  const fallbacks = (process.env.BLOCKCHAIN_RPC_FALLBACKS || DEFAULT_FALLBACKS.join(','))
+    .split(',').map((x) => x.trim()).filter((x) => x && x !== primary);
+
+  const first = await probeRpc(primary);
+  if (first.ok) {
+    console.log(`✅ Nodo de Sepolia respondiendo: ${maskUrl(primary)}`);
+    return true;
+  }
+  console.error(`❌ El nodo de BLOCKCHAIN_RPC_URL (${maskUrl(primary)}) no funciona: ${first.reason}.`);
+  for (const url of fallbacks) {
+    const r = await probeRpc(url);
+    if (r.ok) {
+      connect(url);
+      console.warn(`⚠️  Usando el nodo público de respaldo ${maskUrl(url)}. Corrige BLOCKCHAIN_RPC_URL en el .env para usar el tuyo.`);
+      return true;
+    }
+    console.error(`   Respaldo ${maskUrl(url)} tampoco respondió: ${r.reason}.`);
+  }
+  console.error('❌ Ningún nodo de Sepolia respondió: la firma en blockchain no funcionará hasta corregir BLOCKCHAIN_RPC_URL o la conexión a internet.');
+  return false;
+};
+
 const initBlockchain = () => {
   try {
     if (!process.env.BLOCKCHAIN_RPC_URL || !process.env.BLOCKCHAIN_PRIVATE_KEY || !process.env.BLOCKCHAIN_CONTRACT_ADDRESS) {
@@ -28,18 +114,12 @@ const initBlockchain = () => {
       return false;
     }
 
-    provider = new ethers.JsonRpcProvider(process.env.BLOCKCHAIN_RPC_URL);
-    wallet = new ethers.Wallet(process.env.BLOCKCHAIN_PRIVATE_KEY, provider);
-    contract = new ethers.Contract(
-      process.env.BLOCKCHAIN_CONTRACT_ADDRESS,
-      CONTRACT_ABI,
-      wallet
-    );
-
+    connect(process.env.BLOCKCHAIN_RPC_URL.trim());
     initialized = true;
-    console.log('✅ Blockchain (Sepolia) conectada');
+    console.log('✅ Blockchain (Sepolia) configurada');
     console.log(`   Wallet: ${wallet.address}`);
     console.log(`   Contrato: ${process.env.BLOCKCHAIN_CONTRACT_ADDRESS}`);
+    checkRpc().catch((e) => console.error('❌ Error comprobando el nodo de Sepolia:', e.message));
     return true;
   } catch (err) {
     console.error('❌ Error conectando blockchain:', err.message);
@@ -273,6 +353,7 @@ const chainErrorMessage = (err) => {
   const raw = err?.shortMessage || err?.reason || err?.info?.error?.message || err?.message || String(err);
   if (/insufficient funds/i.test(raw)) return 'La wallet del servidor no tiene ETH de prueba suficiente (Sepolia). Recárgala en un faucet.';
   if (/ya registrado|already registered/i.test(raw)) return 'Este documento ya está registrado en blockchain.';
+  if (/401|403|unauthori[sz]ed|forbidden|api key/i.test(raw)) return 'El proveedor del nodo de Sepolia rechazó la clave (revisa la API key de BLOCKCHAIN_RPC_URL).';
   if (/network|ECONNREFUSED|ENOTFOUND|timeout/i.test(raw)) return 'No hay conexión con el nodo de Sepolia (revisa BLOCKCHAIN_RPC_URL).';
   return raw;
 };
@@ -375,6 +456,8 @@ module.exports = {
   getNetworkInfo,
   chainErrorMessage,
   initBlockchain,
+  checkRpc,
+  getRpcUrl: () => (rpcUrlInUse ? maskUrl(rpcUrlInUse) : null),
   registerSignatureOnBlockchain,
   verifySignatureOnBlockchain,
   revokeSignatureOnBlockchain,
