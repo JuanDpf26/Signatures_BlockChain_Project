@@ -32,6 +32,7 @@ const initAudit = async () => {
       CREATE INDEX IF NOT EXISTS idx_audit_user    ON audit_logs (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_audit_email   ON audit_logs (actor_email, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs (created_at DESC);
+      ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
     `);
     ready = true;
     console.log('🧾 [Auditoría] Tabla audit_logs lista');

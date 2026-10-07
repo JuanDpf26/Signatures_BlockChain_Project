@@ -42,6 +42,7 @@ const initKeys = async () => {
         fingerprint      TEXT NOT NULL,   -- SHA-256 de la clave pública (DER)
         created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE user_keys ENABLE ROW LEVEL SECURITY;
     `);
     getKek();
     ready = true;
