@@ -37,7 +37,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 
 router.get('/reset-password-redirect/:token', (req, res) => {
   const { token } = req.params;
-  const flutterUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
+  const flutterUrl = (process.env.APP_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');
   res.redirect(`${flutterUrl}/#/reset-password?token=${encodeURIComponent(token)}`);
 });
 

@@ -142,7 +142,7 @@ const register = async (req, res) => {
 // VERIFY EMAIL
 // ────────────────────────────────────────────────
 const verifyEmail = async (req, res) => {
-  const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:8080';
+  const appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');
   try {
     const { token } = req.params;
 

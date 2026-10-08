@@ -8,18 +8,26 @@ const nodemailer = require('nodemailer');
 //   EMAIL_PASS           → contraseña de aplicación de 16 caracteres (también acepta GMAIL_APP_PASSWORD)
 //   APP_BASE_URL         → URL del frontend  (ej: http://localhost:8080)
 //   APP_BASE_URL_BACKEND → URL del backend   (ej: http://localhost:3000)
+//   BREVO_API_KEY        → (opcional) envía por la API HTTPS de Brevo en vez de SMTP.
+//                          Necesario en Render gratis, que bloquea los puertos SMTP.
+//   EMAIL_FROM           → (opcional, con Brevo) remitente verificado; por defecto EMAIL_USER
 
 // La configuración se lee al momento de enviar (no al importar el archivo),
 // así funciona aunque dotenv se cargue después de este require.
 const cfg = () => ({
   user: (process.env.EMAIL_USER || process.env.GMAIL_USER || '').trim(),
   pass: (process.env.EMAIL_PASS || process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, ''),
-  frontend: process.env.APP_BASE_URL || 'http://localhost:8080',
-  backend: process.env.APP_BASE_URL_BACKEND || 'http://localhost:3000',
+  frontend: (process.env.APP_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, ''),
+  backend: (process.env.APP_BASE_URL_BACKEND || 'http://localhost:3000').trim().replace(/\/+$/, ''),
+  brevoKey: (process.env.BREVO_API_KEY || '').trim().replace(/^["']|["']$/g, ''),
+  from: (process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.GMAIL_USER || '').trim(),
 });
+
+const useBrevo = () => !!cfg().brevoKey;
 
 // Revisa el .env y devuelve un mensaje claro si algo falta
 const configProblem = () => {
+  if (useBrevo()) return cfg().from ? null : 'Falta EMAIL_FROM (o EMAIL_USER) para enviar con Brevo';
   const { user, pass } = cfg();
   if (!user) return 'Falta EMAIL_USER en el .env';
   if (!pass) return 'Falta EMAIL_PASS en el .env';
@@ -65,6 +73,55 @@ const escapeHtml = (str = '') =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+// ────────────────────────────────────────────────
+// ENVÍO POR API HTTPS (Brevo)
+// ────────────────────────────────────────────────
+// Render gratis bloquea los puertos SMTP (25, 465, 587), así que allí
+// el correo sale por HTTPS (puerto 443). El remitente debe estar verificado en Brevo.
+const toList = (v) =>
+  (Array.isArray(v) ? v : String(v || '').split(','))
+    .map((e) => String(e).trim())
+    .filter(Boolean)
+    .map((email) => ({ email }));
+
+const sendViaBrevo = async ({ to, bcc, subject, html, text, attachments, replyTo }) => {
+  const { brevoKey, from } = cfg();
+  const body = {
+    sender: { name: 'BlockSign', email: from },
+    to: toList(to),
+    subject,
+    htmlContent: html,
+    textContent: text,
+  };
+  const b = toList(bcc);
+  if (b.length) body.bcc = b;
+  if (replyTo) body.replyTo = { email: replyTo };
+  if (attachments?.length) {
+    body.attachment = attachments.map((a) => ({
+      name: a.filename,
+      content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : Buffer.from(a.content || '').toString('base64'),
+    }));
+  }
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': brevoKey, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || `Brevo respondió ${res.status}`);
+    err.code = 'EBREVO';
+    err.responseCode = res.status;
+    if (res.status === 401) console.error('[email] → BREVO_API_KEY inválida. Crea una en Brevo → SMTP & API → API Keys.');
+    if (res.status === 400 && /sender/i.test(err.message))
+      console.error(`[email] → El remitente ${from} no está verificado en Brevo (Senders, Domains & Dedicated IPs → Senders).`);
+    throw err;
+  }
+  console.log(`[email] Enviado a ${to} por Brevo (messageId: ${data.messageId || '—'})`);
+  return { messageId: data.messageId };
+};
+
 // Envío genérico: intenta 465 y, si es un problema de red, reintenta por 587
 const sendEmail = async ({ to, bcc, subject, html, text, link, attachments, replyTo }) => {
   if (link) console.log(`[email] Enlace para ${to}: ${link}`); // siempre visible, aunque el correo falle
@@ -73,6 +130,7 @@ const sendEmail = async ({ to, bcc, subject, html, text, link, attachments, repl
     console.error(`[email] ${problem}`);
     throw new Error(problem);
   }
+  if (useBrevo()) return sendViaBrevo({ to, bcc, subject, html, text, attachments, replyTo });
   const { user } = cfg();
   const message = { from: `"BlockSign" <${user}>`, to, subject, html, text };
   if (attachments?.length) message.attachments = attachments;
@@ -103,6 +161,10 @@ const verifyEmailTransport = async () => {
   if (problem) {
     console.error(`[email] ${problem}`);
     return false;
+  }
+  if (useBrevo()) {
+    console.log(`[email] Envío por Brevo (HTTPS) como ${cfg().from}`);
+    return true;
   }
   for (const port of [465, 587]) {
     try {
