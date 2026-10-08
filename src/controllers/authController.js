@@ -455,6 +455,13 @@ const resetPassword = async (req, res) => {
 // VERIFY CAPTCHA (Google reCAPTCHA)
 // ────────────────────────────────────────────────
 const verifyCaptcha = async (token) => {
+  // La app Android no puede mostrar reCAPTCHA web y envía este token fijo.
+  // Solo se acepta si el servidor lo permite explícitamente (pruebas del APK).
+  if (token === 'mobile_bypass_dev') {
+    const allowed = process.env.ALLOW_MOBILE_CAPTCHA_BYPASS === 'true';
+    if (!allowed) console.warn('[captcha] Registro desde la app móvil rechazado: falta ALLOW_MOBILE_CAPTCHA_BYPASS=true');
+    return allowed;
+  }
   try {
     const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
       method: 'POST',
