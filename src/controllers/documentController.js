@@ -6,7 +6,7 @@ const mammoth = require('mammoth');
 const Groq = require('groq-sdk');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '') }) // tolera espacios o comillas pegados en el panel de Render;
+const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '') }); // tolera espacios o comillas pegados en el panel de Render
 const { logAudit } = require('../services/audit.service');
 const { sendDocumentEmail } = require('../services/email.service');
 

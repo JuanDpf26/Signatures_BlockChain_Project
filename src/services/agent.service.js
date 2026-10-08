@@ -20,7 +20,7 @@ const {
 const { buildVerification } = require('../controllers/signing.controller');
 const { getNetworkInfo } = require('./blockchain.service');
 
-const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '') }) // tolera espacios o comillas pegados en el panel de Render;
+const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '') }); // tolera espacios o comillas pegados en el panel de Render
 const mammoth = require('mammoth');
 
 const MAX_TOOL_ROUNDS = 5;
