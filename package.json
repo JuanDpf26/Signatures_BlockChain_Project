@@ -7,7 +7,8 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "test-email": "node test-email.js",
-    "verificar": "node scripts/verificar-en-cadena.js"
+    "verificar": "node scripts/verificar-en-cadena.js",
+    "gmail-token": "node scripts/gmail-token.js"
   },
   "keywords": [],
   "author": "",

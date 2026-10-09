@@ -8,6 +8,9 @@ const nodemailer = require('nodemailer');
 //   EMAIL_PASS           → contraseña de aplicación de 16 caracteres (también acepta GMAIL_APP_PASSWORD)
 //   APP_BASE_URL         → URL del frontend  (ej: http://localhost:8080)
 //   APP_BASE_URL_BACKEND → URL del backend   (ej: http://localhost:3000)
+//   GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN
+//                        → (recomendado en Render) envía con la API de Gmail por HTTPS.
+//                          Sale desde tu propio Gmail, así que llega a la bandeja principal.
 //   BREVO_API_KEY        → (opcional) envía por la API HTTPS de Brevo en vez de SMTP.
 //                          Necesario en Render gratis, que bloquea los puertos SMTP.
 //   EMAIL_FROM           → (opcional, con Brevo) remitente verificado; por defecto EMAIL_USER
@@ -20,13 +23,18 @@ const cfg = () => ({
   frontend: (process.env.APP_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, ''),
   backend: (process.env.APP_BASE_URL_BACKEND || 'http://localhost:3000').trim().replace(/\/+$/, ''),
   brevoKey: (process.env.BREVO_API_KEY || '').trim().replace(/^["']|["']$/g, ''),
+  gmailId: (process.env.GMAIL_CLIENT_ID || '').trim(),
+  gmailSecret: (process.env.GMAIL_CLIENT_SECRET || '').trim(),
+  gmailRefresh: (process.env.GMAIL_REFRESH_TOKEN || '').trim().replace(/^["']|["']$/g, ''),
   from: (process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.GMAIL_USER || '').trim(),
 });
 
-const useBrevo = () => !!cfg().brevoKey;
+const useGmailApi = () => { const c = cfg(); return !!(c.gmailId && c.gmailSecret && c.gmailRefresh); };
+const useBrevo = () => !useGmailApi() && !!cfg().brevoKey;
 
 // Revisa el .env y devuelve un mensaje claro si algo falta
 const configProblem = () => {
+  if (useGmailApi()) return cfg().user ? null : 'Falta EMAIL_USER (el Gmail que envía) para usar la API de Gmail';
   if (useBrevo()) return cfg().from ? null : 'Falta EMAIL_FROM (o EMAIL_USER) para enviar con Brevo';
   const { user, pass } = cfg();
   if (!user) return 'Falta EMAIL_USER en el .env';
@@ -72,6 +80,49 @@ const escapeHtml = (str = '') =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+// ────────────────────────────────────────────────
+// ENVÍO POR LA API DE GMAIL (HTTPS)
+// ────────────────────────────────────────────────
+// El correo sale realmente desde tu Gmail (firmado por Google), por eso los
+// filtros lo tratan como un correo normal y llega a la bandeja principal.
+// Usa HTTPS (puerto 443), que Render gratis sí permite.
+const MailComposer = require('nodemailer/lib/mail-composer');
+const { OAuth2Client } = require('google-auth-library');
+let gmailClient = null;
+const gmailAuth = () => {
+  const c = cfg();
+  if (!gmailClient) {
+    gmailClient = new OAuth2Client(c.gmailId, c.gmailSecret);
+    gmailClient.setCredentials({ refresh_token: c.gmailRefresh });
+  }
+  return gmailClient;
+};
+
+const sendViaGmailApi = async (message) => {
+  const mail = new MailComposer(message).compile();
+  mail.keepBcc = true; // Gmail toma los destinatarios en copia oculta del encabezado Bcc y luego lo quita
+  const raw = await mail.build();
+  const { token } = await gmailAuth().getAccessToken();
+  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ raw: raw.toString('base64url') }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error?.message || `Gmail API respondió ${res.status}`);
+    err.code = 'EGMAILAPI';
+    err.responseCode = res.status;
+    if (res.status === 401 || /invalid_grant/i.test(err.message))
+      console.error('[email] → GMAIL_REFRESH_TOKEN vencido o revocado: genera uno nuevo (la app de OAuth debe estar "En producción").');
+    if (res.status === 403) console.error('[email] → Activa la "Gmail API" en Google Cloud y usa el permiso gmail.send.');
+    throw err;
+  }
+  console.log(`[email] Enviado a ${message.to} por la API de Gmail (id: ${data.id})`);
+  return { messageId: data.id };
+};
 
 // ────────────────────────────────────────────────
 // ENVÍO POR API HTTPS (Brevo)
@@ -136,6 +187,7 @@ const sendEmail = async ({ to, bcc, subject, html, text, link, attachments, repl
   if (attachments?.length) message.attachments = attachments;
   if (replyTo) message.replyTo = replyTo;
   if (bcc) message.bcc = bcc;
+  if (useGmailApi()) return sendViaGmailApi(message);
 
   let lastErr;
   for (const port of [465, 587]) {
@@ -161,6 +213,10 @@ const verifyEmailTransport = async () => {
   if (problem) {
     console.error(`[email] ${problem}`);
     return false;
+  }
+  if (useGmailApi()) {
+    console.log(`[email] Envío por la API de Gmail (HTTPS) como ${cfg().user}`);
+    return true;
   }
   if (useBrevo()) {
     console.log(`[email] Envío por Brevo (HTTPS) como ${cfg().from}`);

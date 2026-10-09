@@ -38,7 +38,13 @@ services:
         sync: false
       - key: EMAIL_PASS
         sync: false
-      # Render gratis bloquea SMTP: el correo sale por la API de Brevo
+      # Render gratis bloquea SMTP: el correo sale por la API de Gmail (o Brevo)
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
+        sync: false
       - key: BREVO_API_KEY
         sync: false
       - key: EMAIL_FROM
