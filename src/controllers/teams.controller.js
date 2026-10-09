@@ -158,7 +158,7 @@ const addMember = async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Escribe el correo de la persona' });
     const u = await pool.query('SELECT id, name, email FROM users WHERE lower(email) = $1', [email]);
     if (!u.rows.length)
-      return res.status(404).json({ error: 'Esa persona aún no tiene cuenta en BlockSign. Pídele que se registre o envíale el documento por correo.' });
+      return res.status(404).json({ error: 'Esa persona aún no tiene cuenta en DocBlockSign. Pídele que se registre o envíale el documento por correo.' });
     const count = await pool.query('SELECT COUNT(*)::int AS n FROM team_members WHERE team_id = $1', [id]);
     if (count.rows[0].n >= 50) return res.status(400).json({ error: 'Un equipo puede tener hasta 50 miembros' });
     const r = await pool.query(

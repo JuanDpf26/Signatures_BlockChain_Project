@@ -112,7 +112,7 @@ const exportAudit = async (req, res) => {
     payload = jwt.verify(String(req.query.token || ''), process.env.JWT_SECRET);
     if (payload.purpose !== 'audit_export') throw new Error('propósito inválido');
   } catch {
-    return res.status(401).send('El enlace de descarga venció o no es válido. Vuelve a descargar el registro desde BlockSign.');
+    return res.status(401).send('El enlace de descarga venció o no es válido. Vuelve a descargar el registro desde DocBlockSign.');
   }
   try {
     const u = await pool.query('SELECT name, email FROM users WHERE id::text = $1', [payload.uid]);
@@ -146,7 +146,7 @@ const exportAudit = async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (payload.format !== 'html') {
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="BlockSign_auditoria_${stamp}.csv"`);
+      res.setHeader('Content-Disposition', `attachment; filename="DocBlockSign_auditoria_${stamp}.csv"`);
       return res.send('﻿' + csv);
     }
 
@@ -156,7 +156,7 @@ const exportAudit = async (req, res) => {
     const periodLabel = { '7d': 'Últimos 7 días', '30d': 'Últimos 30 días', '90d': 'Últimos 90 días', all: 'Todo el historial' }[f.period] || 'Últimos 30 días';
     const color = { permitido: '#2E7D32', denegado: '#D32F2F', error: '#D99A00' };
     const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Registro de auditoría · BlockSign</title>
+<title>Registro de auditoría · DocBlockSign</title>
 <style>
   *{box-sizing:border-box} body{font-family:'Segoe UI',Roboto,Arial,sans-serif;color:#1B1F27;margin:0;background:#F4F6FA}
   .page{max-width:1100px;margin:24px auto;background:#fff;border:1px solid #E3E7EE;border-radius:14px;overflow:hidden}
@@ -177,7 +177,7 @@ const exportAudit = async (req, res) => {
   @media print{body{background:#fff}.page{margin:0;border:0}.print{display:none} tr{page-break-inside:avoid}}
 </style></head><body>
 <div class="page">
-  <header><div><h1>Registro de auditoría</h1><p>BlockSign · firma digital con blockchain</p></div>
+  <header><div><h1>Registro de auditoría</h1><p>DocBlockSign · firma digital con blockchain</p></div>
   <div style="text-align:right;font-size:13px">Generado el<br><b>${esc(fmtDate(new Date()))}</b></div></header>
   <div class="meta">
     <div>Usuario<b>${esc(user.name || '—')}</b></div><div>Correo<b>${esc(user.email || '—')}</b></div>
@@ -195,7 +195,7 @@ const exportAudit = async (req, res) => {
     <tbody>${rows.map((e) => `<tr><td>${esc(fmtDate(e.created_at))}</td><td><b>${esc(e.description || e.action)}</b><br><span class="mono">${esc(e.action)}${e.method ? ` · ${esc(e.method)} ${esc(e.path || '')}` : ''}</span></td><td class="mono">${esc(e.resource ? String(e.resource).slice(0, 18) : '—')}</td><td class="mono">${esc(e.ip || '—')}</td><td class="mono">${esc(e.request_id ? String(e.request_id).slice(0, 8) : '—')}</td><td><span class="pill" style="color:${color[e.result] || '#5F6670'};border-color:${color[e.result] || '#5F6670'}">${esc(e.result)}</span></td></tr>`).join('') || '<tr><td colspan="6" style="text-align:center;padding:24px;color:#5F6670">No hay eventos en este periodo.</td></tr>'}</tbody>
   </table></div>
   <footer>Huella SHA-256 del registro exportado (formato CSV): <b class="mono">${digest}</b><br>
-  Nunca se guardan contraseñas, tokens ni el contenido de los documentos. Este informe se generó desde BlockSign y queda registrado en la auditoría.</footer>
+  Nunca se guardan contraseñas, tokens ni el contenido de los documentos. Este informe se generó desde DocBlockSign y queda registrado en la auditoría.</footer>
 </div>
 <button class="print" onclick="window.print()">Imprimir o guardar como PDF</button>
 </body></html>`;

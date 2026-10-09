@@ -87,7 +87,7 @@ const toList = (v) =>
 const sendViaBrevo = async ({ to, bcc, subject, html, text, attachments, replyTo }) => {
   const { brevoKey, from } = cfg();
   const body = {
-    sender: { name: 'BlockSign', email: from },
+    sender: { name: 'DocBlockSign', email: from },
     to: toList(to),
     subject,
     htmlContent: html,
@@ -132,7 +132,7 @@ const sendEmail = async ({ to, bcc, subject, html, text, link, attachments, repl
   }
   if (useBrevo()) return sendViaBrevo({ to, bcc, subject, html, text, attachments, replyTo });
   const { user } = cfg();
-  const message = { from: `"BlockSign" <${user}>`, to, subject, html, text };
+  const message = { from: `"DocBlockSign" <${user}>`, to, subject, html, text };
   if (attachments?.length) message.attachments = attachments;
   if (replyTo) message.replyTo = replyTo;
   if (bcc) message.bcc = bcc;
@@ -305,7 +305,7 @@ const layout = ({ preheader, accent = C.primary, icon = '🔐', eyebrow, title, 
         <!-- Pie -->
         <tr><td align="center" style="padding:22px 20px 0;font-family:${FONT};font-size:12px;line-height:1.7;color:#8A919C;">
           Firma digital con huella SHA-256 y registro en Ethereum (Sepolia)<br>
-          BlockSign · Universidad Manuela Beltrán · Proyecto de grado 2026<br>
+          DocBlockSign · Universidad Manuela Beltrán · Proyecto de grado 2026<br>
           <span style="color:#A9AFB8;">Este es un correo automático, no es necesario responderlo.</span>
         </td></tr>
 
@@ -330,16 +330,16 @@ const sendVerificationEmail = async (email, name, token) => {
 
   return sendEmail({
     to: email,
-    subject: 'Confirma tu correo para activar BlockSign',
+    subject: 'Confirma tu correo para activar DocBlockSign',
     link,
-    text: `Hola ${name}:\n\nConfirma tu correo para activar tu cuenta de BlockSign:\n${link}\n\nEl enlace vence en 24 horas. Si no creaste esta cuenta, ignora este mensaje.`,
+    text: `Hola ${name}:\n\nConfirma tu correo para activar tu cuenta de DocBlockSign:\n${link}\n\nEl enlace vence en 24 horas. Si no creaste esta cuenta, ignora este mensaje.`,
     html: layout({
       preheader: 'Un clic y tu cuenta queda lista para firmar documentos.',
       icon: '✉️',
       eyebrow: 'Activa tu cuenta',
       title: `¡Hola, ${safeName}! Confirma tu correo`,
       body: `
-        ${p('Gracias por registrarte en <strong>BlockSign</strong>. Solo falta confirmar que este correo es tuyo para activar tu cuenta.')}
+        ${p('Gracias por registrarte en <strong>DocBlockSign</strong>. Solo falta confirmar que este correo es tuyo para activar tu cuenta.')}
         ${button(link, 'Confirmar mi correo')}
         ${p('<strong>Lo que podrás hacer:</strong>', 'margin-bottom:4px;')}
         ${steps([
@@ -361,14 +361,14 @@ const sendWelcomeEmail = async (email, name) => {
   const safeName = escapeHtml(name);
   return sendEmail({
     to: email,
-    subject: '¡Tu cuenta de BlockSign está activa!',
-    text: `Hola ${name}:\n\nTu cuenta de BlockSign ya está activa. Ingresa en ${link}\n\nPrimeros pasos: crea tu firma en Perfil, sube un documento y fírmalo.`,
+    subject: '¡Tu cuenta de DocBlockSign está activa!',
+    text: `Hola ${name}:\n\nTu cuenta de DocBlockSign ya está activa. Ingresa en ${link}\n\nPrimeros pasos: crea tu firma en Perfil, sube un documento y fírmalo.`,
     html: layout({
       preheader: 'Ya puedes subir, analizar y firmar tus documentos.',
       accent: C.success,
       icon: '🎉',
       eyebrow: 'Cuenta activada',
-      title: `¡Bienvenido a BlockSign, ${safeName}!`,
+      title: `¡Bienvenido a DocBlockSign, ${safeName}!`,
       body: `
         ${p('Tu correo quedó verificado y tu cuenta ya está activa. Así empiezas en menos de 2 minutos:')}
         ${steps([
@@ -377,7 +377,7 @@ const sendWelcomeEmail = async (email, name) => {
           '<strong>Fírmalo</strong> y mira en vivo cómo se registra en la blockchain.',
           '<strong>Verifica</strong> cualquier archivo cuando quieras para comprobar que no fue modificado.',
         ])}
-        ${button(link, 'Ingresar a BlockSign', C.success)}`,
+        ${button(link, 'Ingresar a DocBlockSign', C.success)}`,
     }),
   });
 };
@@ -391,7 +391,7 @@ const sendPasswordResetEmail = async (email, name, token) => {
 
   return sendEmail({
     to: email,
-    subject: 'Restablece tu contraseña de BlockSign',
+    subject: 'Restablece tu contraseña de DocBlockSign',
     link,
     text: `Hola ${name}:\n\nRecibimos una solicitud para restablecer tu contraseña. Crea una nueva aquí:\n${link}\n\nEl enlace vence en 1 hora. Si no fuiste tú, ignora este correo: tu contraseña no cambiará.`,
     html: layout({
@@ -422,7 +422,7 @@ const sendPasswordChangedEmail = async (email, name) => {
   const safeName = escapeHtml(name);
   return sendEmail({
     to: email,
-    subject: 'Tu contraseña de BlockSign fue cambiada',
+    subject: 'Tu contraseña de DocBlockSign fue cambiada',
     text: `Hola ${name}:\n\nLa contraseña de tu cuenta se cambió el ${fmtDate()}.\nSi no fuiste tú, recupera tu cuenta de inmediato: ${link}`,
     html: layout({
       preheader: 'Si fuiste tú, no tienes que hacer nada.',
@@ -471,7 +471,7 @@ const sendDocumentSignedEmail = async (email, name, info) => {
           ['Transacción', short(txHash), true],
         ])}
         ${explorerUrl ? button(explorerUrl, 'Ver transacción en Etherscan') : ''}
-        ${callout(`Cualquier persona puede comprobar que el archivo es auténtico subiéndolo en <a href="${verifyLink}" style="color:${C.primary};font-weight:700;">BlockSign → Verificar</a>. Si alguien cambia aunque sea un carácter, la verificación fallará.`, C.cyan, '🔎')}
+        ${callout(`Cualquier persona puede comprobar que el archivo es auténtico subiéndolo en <a href="${verifyLink}" style="color:${C.primary};font-weight:700;">DocBlockSign → Verificar</a>. Si alguien cambia aunque sea un carácter, la verificación fallará.`, C.cyan, '🔎')}
         ${p('Guarda este correo como comprobante de tu firma.', `font-size:13px;color:${C.hint};`)}`,
     }),
   });
@@ -511,7 +511,7 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
     attachments: attachment ? [attachment] : undefined,
     subject: subject || (review ? `${sender.name || sender.email} te pidió revisar "${title}"` : `${sender.name || sender.email} te compartió "${title}"`),
     text:
-      `${sender.name || sender.email} (${sender.email}) te compartió "${title}" por BlockSign.\n\n` +
+      `${sender.name || sender.email} (${sender.email}) te compartió "${title}" por DocBlockSign.\n\n` +
       (message ? `Mensaje:\n${message}\n\n` : '') +
       `Estado: ${signed ? 'firmado y registrado en blockchain' : 'pendiente de firma'}\n` +
       `Huella SHA-256: ${hash}\n` +
@@ -527,8 +527,8 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
       body: `
         ${p(review
           ? `<strong>${safeSender}</strong> te envió este documento para que lo <strong>revises y lo apruebes o rechaces</strong>.`
-          : `<strong>${safeSender}</strong> te envió este documento a través de BlockSign.`)}
-        ${inApp ? callout(`También está en tu <strong>bandeja de entrada</strong> de BlockSign${review ? ', donde puedes aprobarlo o rechazarlo' : ''}. <a href="${appLink}" style="color:${C.primary};font-weight:700;">Abrir BlockSign</a>`, C.primary, '📥') : ''}
+          : `<strong>${safeSender}</strong> te envió este documento a través de DocBlockSign.`)}
+        ${inApp ? callout(`También está en tu <strong>bandeja de entrada</strong> de DocBlockSign${review ? ', donde puedes aprobarlo o rechazarlo' : ''}. <a href="${appLink}" style="color:${C.primary};font-weight:700;">Abrir DocBlockSign</a>`, C.primary, '📥') : ''}
         ${note ? callout(note, C.primary, '💬') : ''}
         ${dataTable(rows)}
         ${attachment
@@ -537,7 +537,7 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
         ${button(verifyLink, signed ? 'Verificar autenticidad' : 'Ver huella del documento', signed ? C.primary : C.cyan)}
         ${callout(
           signed
-            ? 'Para comprobar que nadie lo modificó, abre “Verificar autenticidad” y sube el archivo: BlockSign calcula su huella en tu navegador y la compara con la registrada en blockchain.'
+            ? 'Para comprobar que nadie lo modificó, abre “Verificar autenticidad” y sube el archivo: DocBlockSign calcula su huella en tu navegador y la compara con la registrada en blockchain.'
             : 'Este documento todavía no está firmado. Su huella SHA-256 sirve para comprobar más adelante que el archivo no cambió.',
           C.cyan,
           '🔎'

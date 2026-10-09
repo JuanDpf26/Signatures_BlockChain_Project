@@ -1,6 +1,6 @@
 const { ethers } = require('ethers');
 
-// ABI del contrato BlockSign
+// ABI del contrato inteligente (desplegado con el nombre original BlockSign)
 const CONTRACT_ABI = [
   "function signDocument(bytes32 _documentHash, bytes32 _signatureHash, string calldata _signerEmail, string calldata _documentTitle) external",
   "function verifyDocument(bytes32 _documentHash) external view returns (bool isValid, address signer, uint256 timestamp, bytes32 signatureHash, string memory signerEmail, string memory documentTitle)",

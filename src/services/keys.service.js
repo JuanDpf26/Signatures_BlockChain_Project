@@ -97,6 +97,7 @@ const getOrCreateUserKeys = async (userId) => {
 
 /** Texto exacto que se firma (incluye la huella del archivo, el firmante y la fecha) */
 const buildPayload = ({ documentHash, signerEmail, signedAt }) =>
+  // "BlockSign|v1" es el identificador del formato de firma (nombre original del proyecto); no se cambia para que las firmas anteriores sigan siendo verificables.
   `BlockSign|v1|doc:${String(documentHash).toLowerCase()}|signer:${String(signerEmail).toLowerCase()}|at:${signedAt}`;
 
 /** Firma el payload con la clave privada del usuario. Devuelve la firma (DER, base64). */

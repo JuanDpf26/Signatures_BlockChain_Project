@@ -346,9 +346,9 @@ const buildVerification = async (hash) => {
   const meta = doc?.metadata || {};
   steps.push({
     key: 'database',
-    label: 'Registro en BlockSign',
+    label: 'Registro en DocBlockSign',
     ok: !!doc,
-    detail: doc ? `Encontrado: ${doc.title}` : 'No hay ningún documento con esta huella en BlockSign',
+    detail: doc ? `Encontrado: ${doc.title}` : 'No hay ningún documento con esta huella en DocBlockSign',
   });
 
   const chain = await verifySignatureOnBlockchain(h);

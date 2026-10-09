@@ -233,7 +233,7 @@ const generateDescriptionWithGroq = async (docId, metadata) => {
     word_count, text_preview,
   } = metadata;
 
-  const prompt = `Eres un experto en gestión documental para BlockSign, sistema de firma digital con blockchain.
+  const prompt = `Eres un experto en gestión documental para DocBlockSign, sistema de firma digital con blockchain.
 Analiza los metadatos de este documento y responde ÚNICAMENTE con JSON válido, sin markdown, sin texto adicional.
 
 Metadatos:

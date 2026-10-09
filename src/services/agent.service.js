@@ -108,7 +108,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'get_network_status',
-      description: 'Estado de la red Ethereum Sepolia y del contrato de BlockSign (bloque actual, documentos registrados, saldo).',
+      description: 'Estado de la red Ethereum Sepolia y del contrato de DocBlockSign (bloque actual, documentos registrados, saldo).',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -354,7 +354,7 @@ const runTool = async (name, args, user, ui) => {
 };
 
 // ── Bucle del agente ───────────────────────────────────────────────────
-const systemPrompt = (user, context) => `Eres "Sign IA", el asistente inteligente de BlockSign, una plataforma de firma digital de documentos con huella SHA-256 y registro en la blockchain Ethereum Sepolia.
+const systemPrompt = (user, context) => `Eres "Sign IA", el asistente inteligente de DocBlockSign, una plataforma de firma digital de documentos con huella SHA-256 y registro en la blockchain Ethereum Sepolia.
 Hablas con ${user.name || 'el usuario'}. Responde SIEMPRE en español, de forma breve, cálida y clara (máximo ~120 palabras salvo que pidan detalle). Usa **negritas** para lo importante y listas cortas con "- " cuando ayuden.
 
 Reglas:
@@ -363,7 +363,7 @@ Reglas:
 - Si pide revisar, analizar riesgos o "¿lo puedo firmar?", usa review_document. La app mostrará una tarjeta con el detalle: tú resume el riesgo y la recomendación en 2-3 frases.
 - Tú no puedes firmar, borrar ni modificar nada. Si quiere firmar, dile que puede hacerlo con el botón que aparece debajo de tu mensaje.
 - Aclara que tu revisión es orientativa y no reemplaza asesoría legal cuando hables de riesgos de un contrato.
-- Si te preguntan cómo funciona BlockSign: la huella SHA-256 identifica el archivo exacto; al firmar se registra en un contrato inteligente en Sepolia; verificar compara la huella del archivo con ese registro.
+- Si te preguntan cómo funciona DocBlockSign: la huella SHA-256 identifica el archivo exacto; al firmar se registra en un contrato inteligente en Sepolia; verificar compara la huella del archivo con ese registro.
 ${context?.documentId ? `- El usuario está viendo el documento con id ${context.documentId}${context.documentTitle ? ` ("${context.documentTitle}")` : ''}; si dice "este documento", se refiere a ese.` : ''}
 Fecha actual: ${new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'full' })}.`;
 
