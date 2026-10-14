@@ -55,6 +55,11 @@ const initCollab = async () => {
       CREATE INDEX IF NOT EXISTS idx_shares_rcpt_email ON document_shares (lower(recipient_email), created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_shares_sender ON document_shares (sender_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_shares_batch ON document_shares (batch_id);
+      -- Bandeja tipo correo: marcar, eliminar (papelera) y respuestas encadenadas
+      ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS flagged BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS deleted_by_recipient BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS deleted_by_sender BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS parent_id UUID;
 
       -- Solo el backend las usa: se bloquea la API pública de Supabase
       ALTER TABLE teams ENABLE ROW LEVEL SECURITY;

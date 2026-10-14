@@ -10,6 +10,20 @@ const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || '').trim().replace(
 const { logAudit } = require('../services/audit.service');
 const { sendDocumentEmail } = require('../services/email.service');
 
+/**
+ * Multer entrega el nombre del archivo leído como latin1, así que los nombres
+ * con tildes, ñ o símbolos llegan dañados ("RevisiÃ³n"). Se vuelven a leer
+ * como UTF-8 cuando corresponde.
+ */
+const fixFileName = (name = '') => {
+  try {
+    const decoded = Buffer.from(name, 'latin1').toString('utf8');
+    return decoded.includes('\uFFFD') ? name : decoded.normalize('NFC');
+  } catch {
+    return name;
+  }
+};
+
 const sanitizeFileName = (originalname) => {
   const ext = originalname.split('.').pop().toLowerCase();
   const nameWithoutExt = originalname.slice(0, originalname.lastIndexOf('.'));
@@ -312,7 +326,8 @@ const uploadDocument = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo' });
 
-    const { originalname, mimetype, size, buffer } = req.file;
+    const { mimetype, size, buffer } = req.file;
+    const originalname = fixFileName(req.file.originalname);
     const userId = req.user.id;
 
     const allowed = [
@@ -554,7 +569,8 @@ const replaceDocumentFile = async (req, res) => {
     if (IN_CHAIN.includes(meta.blockchain_status))
       return res.status(409).json({ error: 'La firma de este documento se está registrando en blockchain. Espera a que termine.' });
 
-    const { originalname, mimetype, size, buffer } = req.file;
+    const { mimetype, size, buffer } = req.file;
+    const originalname = fixFileName(req.file.originalname);
     if (!ALLOWED_MIMES.includes(mimetype)) return res.status(400).json({ error: 'Solo se permiten archivos PDF o Word' });
     if (size > 10 * 1024 * 1024) return res.status(400).json({ error: 'El archivo no puede superar 10MB' });
 

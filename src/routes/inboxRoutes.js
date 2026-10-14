@@ -9,5 +9,10 @@ router.get('/summary', c.inboxSummary);
 router.get('/:id', c.getInboxItem);
 router.post('/:id/respond', c.respond);
 router.post('/:id/archive', c.archive);
+router.post('/:id/read', c.markRead);
+router.post('/:id/flag', c.flag);
+router.post('/:id/delete', c.remove);
+router.post('/:id/reply', c.reply);
+router.post('/:id/forward', c.forward);
 
 module.exports = router;

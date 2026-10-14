@@ -1,18 +1,22 @@
+const crypto = require('crypto');
 const pool = require('../config/db');
 const { getUser } = require('../services/collab.service');
-const { sendShareResponseEmail } = require('../services/email.service');
+const { sendShareResponseEmail, sendDocumentEmail } = require('../services/email.service');
+
+const BOXES = ['received', 'sent', 'archived', 'flagged', 'deleted'];
+const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[a-z]{2,}$/i;
 
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 const DOC_FIELDS = `d.title AS doc_title, d.file_hash, d.status AS doc_status,
   d.metadata->>'extension' AS doc_ext, d.metadata->>'size_mb' AS doc_size_mb`;
 
-/** GET /api/inbox?box=received|sent|archived&q= */
+/** GET /api/inbox?box=received|sent|archived|flagged|deleted&q= */
 const listInbox = async (req, res) => {
   try {
     const me = await getUser(req.user.id);
     if (!me) return res.status(401).json({ error: 'Sesión inválida' });
-    const box = ['received', 'sent', 'archived'].includes(req.query.box) ? req.query.box : 'received';
+    const box = BOXES.includes(req.query.box) ? req.query.box : 'received';
     const q = String(req.query.q || '').trim();
     const params = box === 'sent' ? [String(me.id)] : [String(me.id), String(me.email || '').toLowerCase()];
     let search = '';
@@ -33,7 +37,7 @@ const listInbox = async (req, res) => {
            JOIN documents d ON d.id::text = s.document_id
            LEFT JOIN users ru ON ru.id::text = s.recipient_id
            LEFT JOIN teams t ON t.id = s.team_id
-          WHERE s.sender_id = $1 AND s.archived_by_sender = FALSE ${search}
+          WHERE s.sender_id = $1 AND s.archived_by_sender = FALSE AND s.deleted_by_sender = FALSE ${search}
           GROUP BY s.batch_id, s.document_id, d.title, d.file_hash, d.status, d.metadata
           ORDER BY MIN(s.created_at) DESC LIMIT 100`,
         params
@@ -41,17 +45,22 @@ const listInbox = async (req, res) => {
       return res.json({ box, items: r.rows });
     }
 
-    const archived = box === 'archived';
+    const where = {
+      received: 's.archived_by_recipient = FALSE AND s.deleted_by_recipient = FALSE',
+      archived: 's.archived_by_recipient = TRUE AND s.deleted_by_recipient = FALSE',
+      flagged: 's.flagged = TRUE AND s.deleted_by_recipient = FALSE',
+      deleted: 's.deleted_by_recipient = TRUE',
+    }[box];
     const r = await pool.query(
       `SELECT s.id, s.batch_id, s.created_at, s.subject, s.message, s.kind, s.status, s.response, s.read_at,
-              s.responded_at, s.attached, s.document_id, ${DOC_FIELDS},
+              s.responded_at, s.attached, s.flagged, s.parent_id, s.document_id, ${DOC_FIELDS},
               u.name AS sender_name, u.email AS sender_email, t.name AS team_name, t.color AS team_color
          FROM document_shares s
          JOIN documents d ON d.id::text = s.document_id
          LEFT JOIN users u ON u.id::text = s.sender_id
          LEFT JOIN teams t ON t.id = s.team_id
         WHERE (s.recipient_id = $1 OR lower(s.recipient_email) = $2)
-          AND s.archived_by_recipient = ${archived ? 'TRUE' : 'FALSE'} ${search}
+          AND ${where} ${search}
         ORDER BY s.created_at DESC LIMIT 100`,
       params
     );
@@ -66,12 +75,13 @@ const listInbox = async (req, res) => {
 const inboxSummary = async (req, res) => {
   try {
     const me = await getUser(req.user.id);
-    if (!me) return res.json({ unread: 0, pending_reviews: 0 });
+    if (!me) return res.json({ unread: 0, pending_reviews: 0, flagged: 0 });
     const r = await pool.query(
-      `SELECT COUNT(*) FILTER (WHERE status = 'sent')::int AS unread,
-              COUNT(*) FILTER (WHERE kind = 'review' AND status IN ('sent','read'))::int AS pending_reviews
+      `SELECT COUNT(*) FILTER (WHERE status = 'sent' AND archived_by_recipient = FALSE)::int AS unread,
+              COUNT(*) FILTER (WHERE kind = 'review' AND status IN ('sent','read') AND archived_by_recipient = FALSE)::int AS pending_reviews,
+              COUNT(*) FILTER (WHERE flagged)::int AS flagged
          FROM document_shares
-        WHERE (recipient_id = $1 OR lower(recipient_email) = $2) AND archived_by_recipient = FALSE`,
+        WHERE (recipient_id = $1 OR lower(recipient_email) = $2) AND deleted_by_recipient = FALSE`,
       [String(me.id), String(me.email || '').toLowerCase()]
     );
     return res.json(r.rows[0]);
@@ -223,4 +233,179 @@ const archive = async (req, res) => {
   }
 };
 
-module.exports = { listInbox, inboxSummary, getInboxItem, respond, archive };
+/** Encuentra el envío o responde 404; solo para el usuario con sesión */
+const load = async (req, res) => {
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) {
+    res.status(404).json({ error: 'Mensaje no encontrado' });
+    return null;
+  }
+  const me = await getUser(req.user.id);
+  const found = me && (await findShare(id, me));
+  if (!found) {
+    res.status(404).json({ error: 'Mensaje no encontrado' });
+    return null;
+  }
+  return { me, ...found };
+};
+
+/** POST /api/inbox/:id/read {read: true|false} → leído / no leído */
+const markRead = async (req, res) => {
+  try {
+    const f = await load(req, res);
+    if (!f) return;
+    if (f.role !== 'recipient') return res.json({ message: 'Sin cambios' });
+    const read = req.body?.read !== false;
+    if (read) {
+      await pool.query("UPDATE document_shares SET status = 'read', read_at = COALESCE(read_at, NOW()) WHERE id = $1 AND status = 'sent'", [f.share.id]);
+    } else {
+      await pool.query("UPDATE document_shares SET status = 'sent', read_at = NULL WHERE id = $1 AND status = 'read'", [f.share.id]);
+    }
+    return res.json({ message: read ? 'Marcado como leído' : 'Marcado como no leído' });
+  } catch (err) {
+    return res.status(500).json({ error: 'No se pudo actualizar el mensaje' });
+  }
+};
+
+/** POST /api/inbox/:id/flag {flagged: true|false} → marcar para seguimiento */
+const flag = async (req, res) => {
+  try {
+    const f = await load(req, res);
+    if (!f) return;
+    if (f.role !== 'recipient') return res.status(400).json({ error: 'Solo puedes marcar los mensajes que recibiste' });
+    const value = req.body?.flagged !== false;
+    await pool.query('UPDATE document_shares SET flagged = $1 WHERE id = $2', [value, f.share.id]);
+    return res.json({ message: value ? 'Marcado para seguimiento' : 'Marca quitada', flagged: value });
+  } catch (err) {
+    return res.status(500).json({ error: 'No se pudo marcar el mensaje' });
+  }
+};
+
+/** POST /api/inbox/:id/delete {deleted: true|false} → Eliminados (o restaurar) */
+const remove = async (req, res) => {
+  try {
+    const f = await load(req, res);
+    if (!f) return;
+    const value = req.body?.deleted !== false;
+    if (f.role === 'recipient') {
+      await pool.query('UPDATE document_shares SET deleted_by_recipient = $1, flagged = CASE WHEN $1 THEN FALSE ELSE flagged END WHERE id = $2', [value, f.share.id]);
+    } else {
+      await pool.query('UPDATE document_shares SET deleted_by_sender = $1 WHERE batch_id = $2 AND sender_id = $3', [value, f.share.batch_id, String(f.me.id)]);
+    }
+    return res.json({ message: value ? 'Movido a Eliminados' : 'Restaurado' });
+  } catch (err) {
+    return res.status(500).json({ error: 'No se pudo eliminar el mensaje' });
+  }
+};
+
+/** Datos del documento para el correo */
+const docForEmail = async (documentId) => {
+  const r = await pool.query('SELECT id, title, file_url, file_hash, status, blockchain_tx, metadata FROM documents WHERE id::text = $1', [documentId]);
+  const d = r.rows[0];
+  if (!d) return null;
+  const m = d.metadata || {};
+  return {
+    row: d,
+    info: {
+      title: d.title,
+      hash: d.file_hash,
+      signed: ['signed', 'verified'].includes(d.status),
+      txHash: m.blockchain_tx || d.blockchain_tx || null,
+      blockNumber: m.blockchain_block ?? null,
+      explorerUrl: m.blockchain_explorer || null,
+      signedAt: m.signed_at || null,
+      fileUrl: d.file_url,
+    },
+  };
+};
+
+/** Crea los envíos (uno por destinatario) y manda los correos con el enlace del documento */
+const deliver = async ({ me, documentId, targets, subject, message, parentId }) => {
+  const doc = await docForEmail(documentId);
+  if (!doc) throw Object.assign(new Error('El documento ya no existe'), { status: 404 });
+  const emails = [...new Set(targets.map((t) => String(t).trim().toLowerCase()).filter(Boolean))].filter(
+    (e) => e !== String(me.email || '').toLowerCase()
+  );
+  if (!emails.length) throw Object.assign(new Error('No hay a quién enviarlo'), { status: 400 });
+  const reg = await pool.query('SELECT id, name, email FROM users WHERE lower(email) = ANY($1)', [emails]);
+  const byEmail = Object.fromEntries(reg.rows.map((u) => [u.email.toLowerCase(), u]));
+  const sender = { name: me.name, email: me.email };
+
+  const inApp = emails.filter((e) => byEmail[e]);
+  const outside = emails.filter((e) => !byEmail[e]);
+  for (const [g, isIn] of [[inApp, true], [outside, false]]) {
+    if (!g.length) continue;
+    await sendDocumentEmail({
+      to: g.length === 1 ? g[0] : sender.email,
+      bcc: g.length === 1 ? undefined : g.join(', '),
+      sender, subject, message, attachment: null, kind: 'info', inApp: isIn, doc: doc.info,
+    });
+  }
+  const batch = crypto.randomUUID();
+  for (const e of emails) {
+    await pool.query(
+      `INSERT INTO document_shares (batch_id, document_id, sender_id, recipient_id, recipient_email, subject, message, kind, attached, parent_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'info',FALSE,$8)`,
+      [batch, String(documentId), String(me.id), byEmail[e] ? String(byEmail[e].id) : null, e, subject || null, message || null, parentId || null]
+    );
+  }
+  return emails;
+};
+
+const subjectOf = async (share) => {
+  if (share.subject) return share.subject;
+  const d = await pool.query('SELECT title FROM documents WHERE id::text = $1', [share.document_id]);
+  return d.rows[0]?.title || 'Documento';
+};
+
+/** POST /api/inbox/:id/reply {message} → responde a quien lo envió (o a todos, si lo enviaste tú) */
+const reply = async (req, res) => {
+  try {
+    const f = await load(req, res);
+    if (!f) return;
+    const message = String(req.body?.message || '').trim().slice(0, 2000);
+    if (!message) return res.status(400).json({ error: 'Escribe tu respuesta' });
+    let targets;
+    if (f.role === 'recipient') {
+      const s = await getUser(f.share.sender_id);
+      targets = s?.email ? [s.email] : [];
+    } else {
+      targets = (f.recipients || []).map((r) => r.recipient_email);
+    }
+    const base = await subjectOf(f.share);
+    const subject = /^re:/i.test(base) ? base : `RE: ${base}`;
+    const sent = await deliver({ me: f.me, documentId: f.share.document_id, targets, subject, message, parentId: f.share.id });
+    if (f.role === 'recipient' && f.share.status === 'sent') {
+      await pool.query("UPDATE document_shares SET status = 'read', read_at = NOW() WHERE id = $1", [f.share.id]);
+    }
+    return res.json({ message: `Respuesta enviada a ${sent.join(', ')}`, sent_to: sent });
+  } catch (err) {
+    console.error('ERROR REPLY:', err.message);
+    return res.status(err.status || 502).json({ error: err.status ? err.message : `No se pudo enviar la respuesta: ${err.message}` });
+  }
+};
+
+/** POST /api/inbox/:id/forward {recipients: [...], message} → reenvía el documento a otras personas */
+const forward = async (req, res) => {
+  try {
+    const f = await load(req, res);
+    if (!f) return;
+    const b = req.body || {};
+    const raw = Array.isArray(b.recipients) ? b.recipients : String(b.recipients || '').split(/[,;\s]+/);
+    const emails = [...new Set(raw.map((e) => String(e).trim().toLowerCase()).filter(Boolean))];
+    if (!emails.length) return res.status(400).json({ error: 'Escribe al menos un correo' });
+    if (emails.length > 5) return res.status(400).json({ error: 'Puedes reenviar a máximo 5 correos a la vez' });
+    const bad = emails.filter((e) => !EMAIL_RE.test(e) || e.length > 120);
+    if (bad.length) return res.status(400).json({ error: `Correo no válido: ${bad.join(', ')}` });
+    const message = String(b.message || '').trim().slice(0, 2000);
+    const base = await subjectOf(f.share);
+    const subject = /^rv:/i.test(base) ? base : `RV: ${base}`;
+    const sent = await deliver({ me: f.me, documentId: f.share.document_id, targets: emails, subject, message, parentId: f.share.id });
+    return res.json({ message: `Reenviado a ${sent.join(', ')}`, sent_to: sent });
+  } catch (err) {
+    console.error('ERROR FORWARD:', err.message);
+    return res.status(err.status || 502).json({ error: err.status ? err.message : `No se pudo reenviar: ${err.message}` });
+  }
+};
+
+module.exports = { listInbox, inboxSummary, getInboxItem, respond, archive, markRead, flag, remove, reply, forward };
