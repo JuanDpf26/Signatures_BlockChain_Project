@@ -107,6 +107,48 @@ const TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_pending_tasks',
+      description:
+        'Lo que el usuario tiene por hacer: documentos por firmar, revisiones que le pidieron y aún no responde, mensajes sin leer y firmas en proceso. Úsala para "¿qué tengo pendiente?" o "¿por dónde empiezo?".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_inbox',
+      description: 'Mensajes recientes de la bandeja de entrada (documentos que le compartieron o que envió) con remitente, asunto y estado de la revisión.',
+      parameters: {
+        type: 'object',
+        properties: {
+          box: { type: 'string', enum: ['received', 'sent'], description: 'Recibidos (por defecto) o enviados' },
+          only_pending_reviews: { type: 'boolean', description: 'Solo solicitudes de revisión sin responder' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_teams',
+      description: 'Equipos a los que pertenece el usuario, con su rol y cuántos miembros tienen.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_recent_activity',
+      description: 'Historial reciente de acciones del usuario (subidas, firmas, envíos, inicios de sesión…), según la auditoría.',
+      parameters: {
+        type: 'object',
+        properties: { days: { type: 'integer', description: 'Cuántos días hacia atrás (1-30, por defecto 7)' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_network_status',
       description: 'Estado de la red Ethereum Sepolia y del contrato de DocBlockSign (bloque actual, documentos registrados, saldo).',
       parameters: { type: 'object', properties: {} },
@@ -122,6 +164,10 @@ const STEP_LABEL = {
   ask_document: 'Buscó la respuesta en el documento',
   verify_hash: 'Verificó la huella en blockchain',
   get_network_status: 'Consultó la red Sepolia',
+  get_pending_tasks: 'Revisó tus pendientes',
+  get_inbox: 'Revisó tu bandeja de entrada',
+  list_teams: 'Consultó tus equipos',
+  get_recent_activity: 'Revisó tu actividad reciente',
 };
 
 // ── Utilidades ─────────────────────────────────────────────────────────
@@ -292,6 +338,7 @@ const runTool = async (name, args, user, ui) => {
       if (d.status === 'pending' && !['sending', 'confirming'].includes(m.blockchain_status)) {
         ui.actions.push({ type: 'sign_document', documentId: d.id, title: d.title, label: 'Firmar este documento' });
       }
+      ui.actions.push({ type: 'send_document', documentId: d.id, title: d.title, label: 'Enviar o pedir revisión' });
       return {
         ...docBrief(d),
         description: m.ai_description || null,
@@ -348,24 +395,138 @@ const runTool = async (name, args, user, ui) => {
     case 'get_network_status':
       return getNetworkInfo();
 
+    case 'get_pending_tasks': {
+      const me = String(user.id);
+      const [docs, reviews, unread] = await Promise.all([
+        pool.query(
+          `SELECT id, title, status, metadata, created_at FROM documents
+            WHERE user_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 10`,
+          [user.id]
+        ),
+        pool.query(
+          `SELECT s.id, s.subject, s.created_at, d.title, u.name AS sender
+             FROM document_shares s JOIN documents d ON d.id::text = s.document_id
+             LEFT JOIN users u ON u.id::text = s.sender_id
+            WHERE s.recipient_id = $1 AND s.kind = 'review' AND s.status IN ('sent','read')
+              AND NOT COALESCE(s.deleted_by_recipient, FALSE)
+            ORDER BY s.created_at DESC LIMIT 10`,
+          [me]
+        ),
+        pool.query(
+          `SELECT COUNT(*)::int AS n FROM document_shares
+            WHERE recipient_id = $1 AND status = 'sent' AND NOT COALESCE(deleted_by_recipient, FALSE)`,
+          [me]
+        ),
+      ]);
+      const toSign = docs.rows.filter((d) => !['sending', 'confirming'].includes((d.metadata || {}).blockchain_status));
+      const inChain = docs.rows.length - toSign.length;
+      toSign.slice(0, 2).forEach((d) => ui.actions.push({ type: 'sign_document', documentId: d.id, title: d.title, label: `Firmar "${d.title}"` }));
+      if (reviews.rows.length) ui.actions.push({ type: 'navigate', section: 'inbox', label: 'Abrir la bandeja' });
+      if (toSign.length > 2) ui.actions.push({ type: 'navigate', section: 'documents_pending', label: 'Ver todos los pendientes' });
+      return {
+        to_sign: toSign.map(docBrief),
+        reviews_waiting_for_you: reviews.rows.map((r) => ({ document: r.title, subject: r.subject, from: r.sender, since: r.created_at })),
+        unread_messages: unread.rows[0].n,
+        signatures_in_progress: inChain,
+      };
+    }
+
+    case 'get_inbox': {
+      const me = String(user.id);
+      const sent = args.box === 'sent';
+      const params = [me];
+      let where = sent
+        ? 's.sender_id = $1 AND NOT COALESCE(s.deleted_by_sender, FALSE)'
+        : 's.recipient_id = $1 AND NOT COALESCE(s.deleted_by_recipient, FALSE)';
+      if (args.only_pending_reviews && !sent) where += " AND s.kind = 'review' AND s.status IN ('sent','read')";
+      const r = await pool.query(
+        `SELECT s.subject, s.kind, s.status, s.message, s.created_at, s.recipient_email, d.title, u.name AS sender_name, u.email AS sender_email
+           FROM document_shares s JOIN documents d ON d.id::text = s.document_id
+           LEFT JOIN users u ON u.id::text = s.sender_id
+          WHERE ${where} ORDER BY s.created_at DESC LIMIT 10`,
+        params
+      );
+      ui.actions.push({ type: 'navigate', section: 'inbox', label: 'Abrir la bandeja' });
+      const st = { sent: 'sin leer', read: 'leído', approved: 'aprobado', rejected: 'rechazado' };
+      return {
+        box: sent ? 'enviados' : 'recibidos',
+        messages: r.rows.map((m) => ({
+          document: m.title,
+          subject: m.subject,
+          type: m.kind === 'review' ? 'solicitud de revisión' : 'para conocimiento',
+          status: st[m.status] || m.status,
+          [sent ? 'to' : 'from']: sent ? m.recipient_email : m.sender_name || m.sender_email,
+          message: m.message ? String(m.message).slice(0, 200) : undefined,
+          date: m.created_at,
+        })),
+      };
+    }
+
+    case 'list_teams': {
+      const r = await pool.query(
+        `SELECT t.name, t.description, tm.role,
+                (SELECT COUNT(*)::int FROM team_members x WHERE x.team_id = t.id) AS members
+           FROM teams t JOIN team_members tm ON tm.team_id = t.id AND tm.user_id = $1
+          ORDER BY t.created_at DESC LIMIT 20`,
+        [String(user.id)]
+      );
+      ui.actions.push({ type: 'navigate', section: 'teams', label: 'Abrir Equipos' });
+      const roles = { owner: 'dueño', admin: 'administrador', member: 'miembro' };
+      return { teams: r.rows.map((t) => ({ name: t.name, description: t.description, role: roles[t.role] || t.role, members: t.members })) };
+    }
+
+    case 'get_recent_activity': {
+      const days = Math.min(Math.max(parseInt(args.days, 10) || 7, 1), 30);
+      const r = await pool.query(
+        `SELECT created_at, description, resource, result FROM audit_logs
+          WHERE user_id = $1 AND created_at > NOW() - ($2 || ' days')::interval
+          ORDER BY created_at DESC LIMIT 25`,
+        [String(user.id), String(days)]
+      );
+      ui.actions.push({ type: 'navigate', section: 'audit', label: 'Abrir Auditoría' });
+      return { days, events: r.rows.map((e) => ({ when: e.created_at, what: e.description, on: e.resource || undefined, ok: e.result !== 'error' })) };
+    }
+
     default:
       return { error: `Herramienta desconocida: ${name}` };
   }
 };
 
 // ── Bucle del agente ───────────────────────────────────────────────────
-const systemPrompt = (user, context) => `Eres "Sign IA", el asistente inteligente de DocBlockSign, una plataforma de firma digital de documentos con huella SHA-256 y registro en la blockchain Ethereum Sepolia.
-Hablas con ${user.name || 'el usuario'}. Responde SIEMPRE en español, de forma breve, cálida y clara (máximo ~120 palabras salvo que pidan detalle). Usa **negritas** para lo importante y listas cortas con "- " cuando ayuden.
+const systemPrompt = (user, context) => `Eres "Sign IA", el asistente de DocBlockSign, una plataforma de firma digital de documentos con huella SHA-256 y registro en la blockchain Ethereum Sepolia.
+Hablas con ${user.name || 'el usuario'}. Responde SIEMPRE en español, con un tono profesional, amable y directo. Sé breve (máximo ~120 palabras salvo que pidan detalle). Usa **negritas** para lo importante y listas cortas con "- " cuando ayuden. No uses emojis.
 
-Reglas:
-- Para cualquier dato de sus documentos usa las herramientas; nunca inventes documentos, fechas, montos ni hashes.
-- Si el usuario menciona un documento por nombre, primero búscalo con search_documents para obtener su id.
-- Si pide revisar, analizar riesgos o "¿lo puedo firmar?", usa review_document. La app mostrará una tarjeta con el detalle: tú resume el riesgo y la recomendación en 2-3 frases.
-- Tú no puedes firmar, borrar ni modificar nada. Si quiere firmar, dile que puede hacerlo con el botón que aparece debajo de tu mensaje.
-- Aclara que tu revisión es orientativa y no reemplaza asesoría legal cuando hables de riesgos de un contrato.
-- Si te preguntan cómo funciona DocBlockSign: la huella SHA-256 identifica el archivo exacto; al firmar se registra en un contrato inteligente en Sepolia; verificar compara la huella del archivo con ese registro.
+Cómo trabajas:
+- Para cualquier dato de sus documentos, bandeja, equipos o actividad usa las herramientas; nunca inventes documentos, personas, fechas, montos ni hashes.
+- Si menciona un documento por nombre, búscalo primero con search_documents para obtener su id.
+- "¿Qué tengo pendiente?", "¿por dónde empiezo?" o un saludo con intención de trabajar: usa get_pending_tasks y propón el siguiente paso más útil.
+- Revisar, analizar riesgos o "¿lo puedo firmar?": usa review_document. La app muestra una tarjeta con el detalle; tú resume el riesgo y la recomendación en 2-3 frases y aclara que es una revisión orientativa, no asesoría legal.
+- Tú no firmas, envías, apruebas, borras ni modificas nada. Cuando el usuario quiera hacerlo, dile que use el botón que aparece debajo de tu mensaje o explícale dónde está en la app.
+- Si no sabes algo o la herramienta falla, dilo con claridad y sugiere qué hacer.
+
+Guía de la app (para preguntas de "¿cómo hago…?"):
+- Documentos: "Subir documento" (PDF o Word). Cada documento muestra su análisis del contenido. Desde su detalle puedes Ver documento, Firmar, Enviar, Analizar contenido, Editar datos o subir una nueva versión (solo antes de firmar).
+- Firmar: se usa la firma manuscrita del perfil y la llave de firma del usuario; la huella queda registrada en Sepolia en segundos.
+- Bandeja: documentos que te compartieron o enviaste. Puedes aprobar o rechazar solicitudes de revisión, responder, reenviar, archivar, marcar y crear un "Nuevo envío".
+- Equipos: grupos de personas con cuenta para enviar documentos o pedir revisiones a todos a la vez; se crean con nombre, color y miembros.
+- Verificar: solo para usuarios con sesión; sube el archivo o pega su huella y se compara con el registro en blockchain.
+- Mi perfil (Configuración de la cuenta): datos, contraseña, llaves de firma, firma manuscrita, apariencia y accesibilidad (modo oscuro, tamaño del texto, alto contraste) y eliminar la cuenta.
+- La huella SHA-256 identifica el archivo exacto: si cambia un solo carácter, la verificación falla.
 ${context?.documentId ? `- El usuario está viendo el documento con id ${context.documentId}${context.documentTitle ? ` ("${context.documentTitle}")` : ''}; si dice "este documento", se refiere a ese.` : ''}
 Fecha actual: ${new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'full' })}.`;
+
+// Preguntas de seguimiento según lo que se consultó
+const followUps = (steps) => {
+  const used = new Set(steps.map((s) => s.tool));
+  const out = [];
+  if (used.has('get_pending_tasks')) out.push('Revisa el primer documento pendiente antes de firmarlo');
+  if (used.has('review_document')) out.push('¿Qué cláusulas debería revisar con más cuidado?');
+  if (used.has('search_documents') || used.has('get_document_details')) out.push('¿A quién le puedo pedir que lo revise?');
+  if (used.has('get_inbox')) out.push('¿Qué revisiones me faltan por responder?');
+  if (used.has('get_recent_activity')) out.push('¿Qué firmé esta semana?');
+  if (!out.length) out.push('¿Qué tengo pendiente?', 'Dame un resumen de mi cuenta');
+  return out.slice(0, 3);
+};
 
 const runAgent = async ({ user, messages, context }) => {
   if (!process.env.GROQ_API_KEY) throw new Error('Falta GROQ_API_KEY en el .env');
@@ -433,6 +594,7 @@ const finish = (content, ui, model) => {
     steps: ui.steps,
     actions: actions.slice(0, 4),
     cards: ui.cards,
+    suggestions: followUps(ui.steps),
     model,
   };
 };
