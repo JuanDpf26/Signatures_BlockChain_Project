@@ -1,6 +1,6 @@
 // Diagnóstico del correo. Ejecutar desde la raíz del backend:
 //   node test-email.js tu-correo@gmail.com
-require('dotenv').config(); // SIEMPRE antes de importar el servicio
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }); // SIEMPRE antes de importar el servicio
 
 const pass = (process.env.EMAIL_PASS || '').replace(/\s+/g, '');
 console.log('──────── Configuración ────────');
@@ -11,7 +11,7 @@ console.log('APP_BASE_URL_BACKEND :', process.env.APP_BASE_URL_BACKEND || 'NO de
 console.log('───────────────────────────────\n');
 
 // Busca el servicio en las carpetas más comunes del proyecto
-const candidates = ['./services/email.service', './src/services/email.service', './app/services/email.service'];
+const candidates = ['../src/services/email.service'];
 let service = null;
 for (const c of candidates) {
   try {

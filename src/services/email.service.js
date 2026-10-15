@@ -527,7 +527,7 @@ const sendDocumentSignedEmail = async (email, name, info) => {
           ['Transacción', short(txHash), true],
         ])}
         ${explorerUrl ? button(explorerUrl, 'Ver transacción en Etherscan') : ''}
-        ${callout(`Cualquier persona puede comprobar que el archivo es auténtico subiéndolo en <a href="${verifyLink}" style="color:${C.primary};font-weight:700;">DocBlockSign → Verificar</a>. Si alguien cambia aunque sea un carácter, la verificación fallará.`, C.cyan, '🔎')}
+        ${callout(`Cualquier persona con cuenta en DocBlockSign puede comprobar que el archivo es auténtico subiéndolo en <a href="${verifyLink}" style="color:${C.primary};font-weight:700;">DocBlockSign → Verificar</a>. Si alguien cambia aunque sea un carácter, la verificación fallará.`, C.cyan, '🔎')}
         ${p('Guarda este correo como comprobante de tu firma.', `font-size:13px;color:${C.hint};`)}`,
     }),
   });
@@ -536,7 +536,7 @@ const sendDocumentSignedEmail = async (email, name, info) => {
 /**
  * Envía un documento a otras personas desde la plataforma.
  * Incluye el archivo adjunto (o un enlace), su huella SHA-256 y, si está firmado,
- * los datos del registro en blockchain y un enlace para verificarlo sin cuenta.
+ * los datos del registro en blockchain y un enlace para verificarlo (requiere iniciar sesión).
  */
 const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attachment, kind = 'info', inApp = false }) => {
   const { title, hash, signed, txHash, blockNumber, explorerUrl, signedAt, fileUrl } = doc;

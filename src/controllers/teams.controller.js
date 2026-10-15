@@ -26,28 +26,64 @@ const listTeams = async (req, res) => {
   }
 };
 
-/** POST /api/teams {name, description} */
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]{2,}$/;
+
+/**
+ * POST /api/teams {name, description, color?, members?: [{email, role}]}
+ * Crea el equipo y agrega a los miembros en un solo paso.
+ * Responde con quiénes se agregaron y qué correos no tienen cuenta.
+ */
 const createTeam = async (req, res) => {
   const client = await pool.connect();
   try {
+    const me = String(req.user.id);
     const name = String(req.body?.name || '').trim().slice(0, 60);
     const description = String(req.body?.description || '').trim().slice(0, 300);
     if (name.length < 2) return res.status(400).json({ error: 'El nombre del equipo debe tener al menos 2 caracteres' });
-    const count = await client.query('SELECT COUNT(*)::int AS n FROM teams WHERE owner_id = $1', [String(req.user.id)]);
+    const count = await client.query('SELECT COUNT(*)::int AS n FROM teams WHERE owner_id = $1', [me]);
     if (count.rows[0].n >= 20) return res.status(400).json({ error: 'Puedes crear hasta 20 equipos' });
-    const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    const dup = await client.query('SELECT 1 FROM teams WHERE owner_id = $1 AND lower(name) = lower($2)', [me, name]);
+    if (dup.rows.length) return res.status(409).json({ error: 'Ya tienes un equipo con ese nombre' });
+    const color = HEX_RE.test(String(req.body?.color || '')) ? String(req.body.color).toUpperCase() : COLORS[Math.floor(Math.random() * COLORS.length)];
+
+    // Miembros iniciales (opcional): solo personas con cuenta
+    const wanted = new Map();
+    for (const m of Array.isArray(req.body?.members) ? req.body.members.slice(0, 49) : []) {
+      const email = String(m?.email || '').trim().toLowerCase();
+      if (EMAIL_RE.test(email)) wanted.set(email, m?.role === 'admin' ? 'admin' : 'member');
+    }
+    const found = wanted.size
+      ? (await client.query('SELECT id, name, email FROM users WHERE lower(email) = ANY($1::text[])', [[...wanted.keys()]])).rows
+      : [];
+    const byEmail = new Map(found.map((u) => [String(u.email).toLowerCase(), u]));
+
     await client.query('BEGIN');
     const t = await client.query(
       'INSERT INTO teams (name, description, color, owner_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, description || null, color, String(req.user.id)]
+      [name, description || null, color, me]
     );
-    await client.query(
-      "INSERT INTO team_members (team_id, user_id, role, added_by) VALUES ($1, $2, 'owner', $2)",
-      [t.rows[0].id, String(req.user.id)]
-    );
+    const teamId = t.rows[0].id;
+    await client.query("INSERT INTO team_members (team_id, user_id, role, added_by) VALUES ($1, $2, 'owner', $2)", [teamId, me]);
+    const added = [];
+    for (const [email, role] of wanted) {
+      const u = byEmail.get(email);
+      if (!u || String(u.id) === me) continue;
+      await client.query(
+        'INSERT INTO team_members (team_id, user_id, role, added_by) VALUES ($1, $2, $3, $4) ON CONFLICT (team_id, user_id) DO NOTHING',
+        [teamId, String(u.id), role, me]
+      );
+      added.push({ name: u.name, email: u.email, role });
+    }
     await client.query('COMMIT');
-    res.locals.auditDetail = { team: name };
-    return res.status(201).json({ message: 'Equipo creado', team: { ...t.rows[0], my_role: 'owner', members_count: 1 } });
+    const missing = [...wanted.keys()].filter((e) => !byEmail.has(e));
+    res.locals.auditDetail = { team: name, members: added.length };
+    return res.status(201).json({
+      message: 'Equipo creado',
+      team: { ...t.rows[0], my_role: 'owner', members_count: added.length + 1 },
+      added,
+      missing,
+    });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('ERROR CREATE TEAM:', err.message);
@@ -103,9 +139,10 @@ const updateTeam = async (req, res) => {
     const name = req.body?.name !== undefined ? String(req.body.name).trim().slice(0, 60) : null;
     if (name !== null && name.length < 2) return res.status(400).json({ error: 'El nombre es muy corto' });
     const description = req.body?.description !== undefined ? String(req.body.description).trim().slice(0, 300) : null;
+    const color = HEX_RE.test(String(req.body?.color || '')) ? String(req.body.color).toUpperCase() : null;
     const r = await pool.query(
-      'UPDATE teams SET name = COALESCE($1, name), description = COALESCE($2, description) WHERE id = $3 RETURNING *',
-      [name, description, id]
+      'UPDATE teams SET name = COALESCE($1, name), description = COALESCE($2, description), color = COALESCE($3, color) WHERE id = $4 RETURNING *',
+      [name, description, color, id]
     );
     return res.json({ message: 'Equipo actualizado', team: r.rows[0] });
   } catch (err) {

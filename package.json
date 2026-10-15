@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
-    "test-email": "node test-email.js",
+    "test-email": "node scripts/probar-correo.js",
     "verificar": "node scripts/verificar-en-cadena.js",
     "gmail-token": "node scripts/gmail-token.js"
   },
@@ -26,7 +26,6 @@
     "ethers": "^6.17.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.4.1",
-    "firebase-admin": "^13.10.0",
     "google-auth-library": "^10.6.2",
     "groq-sdk": "^1.2.0",
     "helmet": "^8.1.0",

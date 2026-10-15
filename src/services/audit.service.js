@@ -104,12 +104,10 @@ const RULES = [
   ['DELETE', /^\/api\/profile\/signature$/, 'profile.signature_delete', 'Eliminó su firma manuscrita'],
   ['PATCH', /^\/api\/profile\/password$/, 'profile.password', 'Cambió su contraseña'],
   ['DELETE', /^\/api\/profile\/?$/, 'profile.delete_account', 'Eliminó su cuenta'],
-  ['POST', /^\/api\/signatures\/?$/, 'profile.signature_save', 'Guardó su firma manuscrita'],
-  ['DELETE', /^\/api\/signatures\/?$/, 'profile.signature_delete', 'Eliminó su firma manuscrita'],
   ['POST', new RegExp(`^/api/signing/${UUID}/sign$`), 'signing.sign', 'Firmó un documento (transacción enviada)'],
   ['DELETE', new RegExp(`^/api/signing/${UUID}/revoke$`), 'signing.revoke', 'Revocó una firma'],
   ['GET', new RegExp(`^/api/signing/${UUID}/verify$`), 'signing.verify', 'Verificó un documento propio'],
-  ['GET', /^\/api\/signing\/public\/[0-9a-fA-F]+$/, 'signing.public_verify', 'Verificación pública por huella'],
+  ['GET', /^\/api\/signing\/hash\/[0-9a-fA-F]+$/, 'signing.public_verify', 'Verificación por huella'],
   ['POST', /^\/api\/agent\/chat$/, 'agent.chat', 'Consultó al asistente Sign IA'],
 ];
 

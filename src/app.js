@@ -7,7 +7,6 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/authRoutes');
 const documentRoutes = require('./routes/documentRoutes');
 const profileRoutes = require('./routes/profileRoutes');
-const signatureRoutes = require('./routes/signatureRoutes');
 const signingRoutes = require('./routes/signingRoutes');
 const agentRoutes = require('./routes/agentRoutes');
 const auditRoutes = require('./routes/auditRoutes');
@@ -17,10 +16,6 @@ const keysRoutes = require('./routes/keysRoutes');
 const teamsRoutes = require('./routes/teamsRoutes');
 const inboxRoutes = require('./routes/inboxRoutes');
 const { initCollab } = require('./services/collab.service');
-
-// Inicializar Firebase
-const { initFirebase } = require('./config/firebase');
-initFirebase();
 
 // Inicializar Blockchain
 const { initBlockchain } = require('./services/blockchain.service');
@@ -56,7 +51,6 @@ app.use(rateLimit({
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/profile', profileRoutes);
-app.use('/api/signatures', signatureRoutes);
 app.use('/api/signing', signingRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/audit', auditRoutes);
