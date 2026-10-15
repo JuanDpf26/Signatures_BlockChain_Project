@@ -378,7 +378,17 @@ const uploadDocument = async (req, res) => {
 const getDocuments = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { search, category, status, ext, date_from, date_to, page = 1, limit = 20 } = req.query;
+    const { search, category, status, ext, date_from, date_to, sort } = req.query;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    // Orden permitido (lista cerrada: nunca se arma SQL con lo que llega)
+    const ORDERS = {
+      recent: 'created_at DESC',
+      oldest: 'created_at ASC',
+      name: 'LOWER(title) ASC, created_at DESC',
+      name_desc: 'LOWER(title) DESC, created_at DESC',
+    };
+    const orderBy = ORDERS[sort] || ORDERS.recent;
 
     let query = `SELECT id, title, file_url, file_hash, status, metadata, created_at, updated_at
       FROM documents WHERE user_id = $1`;
@@ -409,10 +419,10 @@ const getDocuments = async (req, res) => {
       params
     );
     const total = parseInt(countResult.rows[0].count);
-    query += ` ORDER BY created_at DESC LIMIT $${i} OFFSET $${i + 1}`;
-    params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+    query += ` ORDER BY ${orderBy} LIMIT $${i} OFFSET $${i + 1}`;
+    params.push(limit, (page - 1) * limit);
     const result = await pool.query(query, params);
-    return res.json({ documents: result.rows, pagination: { total, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(total / parseInt(limit)) } });
+    return res.json({ documents: result.rows, pagination: { total, page, limit, pages: Math.ceil(total / limit), sort: ORDERS[sort] ? sort : 'recent' } });
   } catch (err) {
     console.error('ERROR GET DOCS:', err);
     return res.status(500).json({ error: 'Error al obtener documentos' });
