@@ -268,10 +268,10 @@ const button = (href, label, color = C.primary) => `
     </td></tr>
   </table>`;
 
-const callout = (html, color = C.primary, icon = 'ℹ️') => `
+const callout = (html, color = C.primary, title = '') => `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;">
-    <tr><td style="background:${color}0F;border:1px solid ${color}33;border-left:4px solid ${color};border-radius:10px;padding:14px 16px;font-family:${FONT};font-size:13px;line-height:1.6;color:${C.text};">
-      <span style="font-size:15px;">${icon}</span>&nbsp; ${html}
+    <tr><td style="background:${color}0D;border-left:3px solid ${color};border-radius:0 8px 8px 0;padding:13px 16px;font-family:${FONT};font-size:13px;line-height:1.6;color:${C.text};">
+      ${title ? `<strong style="display:block;margin-bottom:2px;color:${color};">${title}</strong>` : ''}${html}
     </td></tr>
   </table>`;
 
@@ -316,7 +316,7 @@ const fallbackLink = (link) => `
  * @param preheader texto corto que Gmail muestra junto al asunto
  * @param accent    color de la franja superior e ícono
  */
-const layout = ({ preheader, accent = C.primary, icon = '🔐', eyebrow, title, body }) => `<!DOCTYPE html>
+const layout = ({ preheader, accent = C.primary, eyebrow, title, body, reason }) => `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
@@ -326,7 +326,7 @@ const layout = ({ preheader, accent = C.primary, icon = '🔐', eyebrow, title, 
   <style>
     @media (max-width: 480px) {
       .pad { padding: 28px 22px 8px !important; }
-      .padb { padding: 8px 22px 26px !important; }
+      .padb { padding: 0 22px 26px !important; }
     }
   </style>
 </head>
@@ -337,32 +337,30 @@ const layout = ({ preheader, accent = C.primary, icon = '🔐', eyebrow, title, 
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:580px;">
 
         <!-- Marca -->
-        <tr><td align="center" style="padding-bottom:20px;">
+        <tr><td style="padding:0 4px 18px;">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td bgcolor="${C.primary}" style="width:38px;height:38px;border-radius:10px;text-align:center;font-size:19px;line-height:38px;">⛓️</td>
-            <td style="padding-left:10px;font-family:${FONT};font-size:21px;font-weight:800;color:${C.text};letter-spacing:-0.3px;">Block<span style="color:${C.primary};">Sign</span></td>
+            <td bgcolor="${C.primary}" style="width:34px;height:34px;border-radius:9px;text-align:center;font-family:${FONT};font-size:18px;font-weight:800;line-height:34px;color:#ffffff;">&#10003;</td>
+            <td style="padding-left:10px;font-family:${FONT};font-size:19px;font-weight:800;color:${C.text};letter-spacing:-0.3px;">Doc<span style="color:${C.primary};">BlockSign</span></td>
           </tr></table>
         </td></tr>
 
         <!-- Tarjeta -->
-        <tr><td bgcolor="#ffffff" style="border-radius:16px;border:1px solid ${C.border};overflow:hidden;">
+        <tr><td bgcolor="#ffffff" style="border-radius:14px;border:1px solid ${C.border};overflow:hidden;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            <tr><td style="height:5px;line-height:5px;font-size:0;background:${accent};background-image:linear-gradient(90deg, ${accent}, ${C.cyan});">&nbsp;</td></tr>
-            <tr><td style="padding:36px 36px 8px;" class="pad">
-              <div style="width:56px;height:56px;line-height:56px;border-radius:16px;background:${accent}14;text-align:center;font-size:28px;margin-bottom:18px;">${icon}</div>
-              ${eyebrow ? `<p style="margin:0 0 6px;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${accent};">${eyebrow}</p>` : ''}
-              <h1 style="margin:0 0 14px;font-family:${FONT};font-size:24px;line-height:1.3;font-weight:800;color:${C.text};">${title}</h1>
+            <tr><td style="height:4px;line-height:4px;font-size:0;background:${accent};">&nbsp;</td></tr>
+            <tr><td style="padding:32px 36px 8px;" class="pad">
+              ${eyebrow ? `<p style="margin:0 0 8px;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:${accent};">${eyebrow}</p>` : ''}
+              <h1 style="margin:0 0 16px;font-family:${FONT};font-size:22px;line-height:1.3;font-weight:800;color:${C.text};">${title}</h1>
               ${body}
             </td></tr>
-            <tr><td style="padding:8px 36px 32px;" class="padb"></td></tr>
+            <tr><td style="padding:0 36px 30px;" class="padb"></td></tr>
           </table>
         </td></tr>
 
         <!-- Pie -->
-        <tr><td align="center" style="padding:22px 20px 0;font-family:${FONT};font-size:12px;line-height:1.7;color:#8A919C;">
-          Firma digital con huella SHA-256 y registro en Ethereum (Sepolia)<br>
-          DocBlockSign · Universidad Manuela Beltrán · Proyecto de grado 2026<br>
-          <span style="color:#A9AFB8;">Este es un correo automático, no es necesario responderlo.</span>
+        <tr><td style="padding:22px 6px 0;font-family:${FONT};font-size:12px;line-height:1.7;color:#8A919C;">
+          ${reason || 'Recibes este correo por tu cuenta en DocBlockSign.'} DocBlockSign nunca te pedirá tu contraseña por correo.<br>
+          <span style="color:#A9AFB8;">DocBlockSign · Firma digital con registro en blockchain · Universidad Manuela Beltrán, 2026. Correo automático, no es necesario responderlo.</span>
         </td></tr>
 
       </table>
@@ -390,20 +388,18 @@ const sendVerificationEmail = async (email, name, token) => {
     link,
     text: `Hola ${name}:\n\nConfirma tu correo para activar tu cuenta de DocBlockSign:\n${link}\n\nEl enlace vence en 24 horas. Si no creaste esta cuenta, ignora este mensaje.`,
     html: layout({
-      preheader: 'Un clic y tu cuenta queda lista para firmar documentos.',
-      icon: '✉️',
-      eyebrow: 'Activa tu cuenta',
-      title: `¡Hola, ${safeName}! Confirma tu correo`,
+      preheader: 'Confirma tu correo para activar tu cuenta. El enlace vence en 24 horas.',
+      eyebrow: 'Activación de cuenta',
+      title: 'Confirma tu correo electrónico',
+      reason: 'Recibes este correo porque se creó una cuenta en DocBlockSign con esta dirección.',
       body: `
-        ${p('Gracias por registrarte en <strong>DocBlockSign</strong>. Solo falta confirmar que este correo es tuyo para activar tu cuenta.')}
+        ${p(`Hola <strong>${safeName}</strong>, gracias por registrarte en DocBlockSign. Para activar tu cuenta, confirma que este correo es tuyo.`)}
         ${button(link, 'Confirmar mi correo')}
-        ${p('<strong>Lo que podrás hacer:</strong>', 'margin-bottom:4px;')}
-        ${steps([
-          'Subir tus documentos y obtener un <strong>análisis automático con IA</strong>.',
-          'Firmarlos con tu firma manuscrita digital.',
-          'Registrar cada firma en <strong>blockchain</strong> para que nadie pueda alterarla.',
+        ${dataTable([
+          ['Cuenta', escapeHtml(email)],
+          ['El enlace vence', 'en 24 horas'],
         ])}
-        ${callout('Este enlace vence en <strong>24 horas</strong>. Si no creaste esta cuenta, ignora este correo: no se activará.', C.warning, '⏳')}
+        ${callout('Si no creaste esta cuenta, ignora este correo: no se activará y no se guardará ningún dato adicional.', C.hint, '¿No fuiste tú?')}
         ${fallbackLink(link)}`,
     }),
   });
@@ -422,16 +418,15 @@ const sendWelcomeEmail = async (email, name) => {
     html: layout({
       preheader: 'Ya puedes subir, analizar y firmar tus documentos.',
       accent: C.success,
-      icon: '🎉',
       eyebrow: 'Cuenta activada',
-      title: `¡Bienvenido a DocBlockSign, ${safeName}!`,
+      title: `Tu cuenta está lista, ${safeName}`,
       body: `
-        ${p('Tu correo quedó verificado y tu cuenta ya está activa. Así empiezas en menos de 2 minutos:')}
+        ${p('Tu correo quedó verificado y ya puedes usar DocBlockSign. Te recomendamos empezar así:')}
         ${steps([
-          '<strong>Crea tu firma</strong> en <em>Perfil → Mi firma</em> (la dibujas una sola vez).',
-          '<strong>Sube un documento</strong> PDF o Word: la IA lo resume y lo clasifica.',
-          '<strong>Fírmalo</strong> y mira en vivo cómo se registra en la blockchain.',
-          '<strong>Verifica</strong> cualquier archivo cuando quieras para comprobar que no fue modificado.',
+          '<strong>Crea tu firma manuscrita</strong> en <em>Mi perfil → Firma manuscrita</em>. Solo la haces una vez.',
+          '<strong>Sube un documento</strong> PDF o Word. Su contenido se analiza y se clasifica automáticamente.',
+          '<strong>Fírmalo</strong>: tu firma y la huella del archivo quedan registradas en blockchain.',
+          '<strong>Compártelo o pide revisión</strong> desde la bandeja de entrada.',
         ])}
         ${button(link, 'Ingresar a DocBlockSign', C.success)}`,
     }),
@@ -452,19 +447,21 @@ const sendPasswordResetEmail = async (email, name, token) => {
     text: `Hola ${name}:\n\nRecibimos una solicitud para restablecer tu contraseña. Crea una nueva aquí:\n${link}\n\nEl enlace vence en 1 hora. Si no fuiste tú, ignora este correo: tu contraseña no cambiará.`,
     html: layout({
       preheader: 'Crea una nueva contraseña. El enlace vence en 1 hora.',
-      accent: C.warning,
-      icon: '🔑',
-      eyebrow: 'Seguridad de la cuenta',
+      accent: C.primary,
+      eyebrow: 'Recuperación de contraseña',
       title: 'Restablece tu contraseña',
+      reason: 'Recibes este correo porque alguien pidió restablecer la contraseña de esta cuenta.',
       body: `
-        ${p(`Hola <strong>${safeName}</strong>, recibimos una solicitud para cambiar la contraseña de tu cuenta.`)}
-        ${p('Haz clic en el botón para crear una nueva. Debe tener al menos 8 caracteres, una mayúscula y un número.')}
-        ${button(link, 'Crear nueva contraseña', C.warning)}
+        ${p(`Hola <strong>${safeName}</strong>, recibimos una solicitud para restablecer la contraseña de tu cuenta de DocBlockSign.`)}
+        ${p('Usa el botón para crear una contraseña nueva. Debe tener al menos 8 caracteres, una mayúscula y un número.')}
+        ${button(link, 'Crear nueva contraseña')}
         ${dataTable([
-          ['Solicitado', fmtDate()],
-          ['Vence en', '1 hora'],
+          ['Cuenta', escapeHtml(email)],
+          ['Solicitud', fmtDate()],
+          ['El enlace vence', 'en 1 hora y sirve una sola vez'],
         ])}
-        ${callout('¿No fuiste tú? Ignora este correo: tu contraseña <strong>no cambiará</strong> mientras nadie use este enlace.', C.danger, '🛡️')}
+        ${callout('Si no pediste este cambio, ignora este correo. Tu contraseña actual seguirá funcionando y nadie podrá cambiarla sin este enlace.', C.danger, '¿No fuiste tú?')}
+        ${callout('No reenvíes este correo ni compartas el enlace: quien lo tenga podrá cambiar tu contraseña durante la próxima hora.', C.hint, 'Por tu seguridad')}
         ${fallbackLink(link)}`,
     }),
   });
@@ -474,7 +471,7 @@ const sendPasswordResetEmail = async (email, name, token) => {
 // CONTRASEÑA CAMBIADA (aviso de seguridad)
 // ────────────────────────────────────────────────
 const sendPasswordChangedEmail = async (email, name) => {
-  const link = `${cfg().frontend}/#/forgot-password`;
+  const link = `${cfg().frontend}/#/forgot`;
   const safeName = escapeHtml(name);
   return sendEmail({
     to: email,
@@ -483,9 +480,9 @@ const sendPasswordChangedEmail = async (email, name) => {
     html: layout({
       preheader: 'Si fuiste tú, no tienes que hacer nada.',
       accent: C.success,
-      icon: '✅',
       eyebrow: 'Aviso de seguridad',
       title: 'Tu contraseña fue actualizada',
+      reason: 'Recibes este aviso porque cambió la contraseña de tu cuenta.',
       body: `
         ${p(`Hola <strong>${safeName}</strong>, te confirmamos que la contraseña de tu cuenta se cambió correctamente.`)}
         ${dataTable([
@@ -493,7 +490,7 @@ const sendPasswordChangedEmail = async (email, name) => {
           ['Fecha', fmtDate()],
         ])}
         ${p('Si fuiste tú, no tienes que hacer nada más.')}
-        ${callout(`¿No reconoces este cambio? <a href="${link}" style="color:${C.danger};font-weight:700;">Recupera tu cuenta ahora</a> y cambia también la contraseña de tu correo.`, C.danger, '⚠️')}`,
+        ${callout(`Si no reconoces este cambio, <a href="${link}" style="color:${C.danger};font-weight:700;">recupera tu cuenta ahora</a> y cambia también la contraseña de tu correo electrónico.`, C.danger, '¿No fuiste tú?')}`,
     }),
   });
 };
@@ -503,18 +500,17 @@ const sendPasswordChangedEmail = async (email, name) => {
 // ────────────────────────────────────────────────
 const sendDocumentSignedEmail = async (email, name, info) => {
   const { title, documentHash, txHash, blockNumber, explorerUrl, signedAt } = info;
-  const verifyLink = `${cfg().frontend}/#/home`;
+  const verifyLink = `${cfg().frontend}/#/verify?hash=${encodeURIComponent(documentHash || '')}`;
   const safeName = escapeHtml(name);
   const safeTitle = escapeHtml(title);
   const short = (h) => (h && h.length > 26 ? `${h.slice(0, 14)}…${h.slice(-10)}` : h || '—');
   return sendEmail({
     to: email,
-    subject: `Firmaste "${title}" ✍️`,
+    subject: `Comprobante de firma: "${title}"`,
     text: `Hola ${name}:\n\nFirmaste "${title}" y quedó registrado en la blockchain Sepolia.\n\nHuella SHA-256: ${documentHash}\nTransacción: ${txHash}\nBloque: ${blockNumber}\nVer en Etherscan: ${explorerUrl}\n\nGuarda este correo como comprobante.`,
     html: layout({
       preheader: `Comprobante de firma · bloque #${blockNumber}`,
       accent: C.primary,
-      icon: '✍️',
       eyebrow: 'Comprobante de firma',
       title: 'Documento firmado y registrado en blockchain',
       body: `
@@ -527,7 +523,7 @@ const sendDocumentSignedEmail = async (email, name, info) => {
           ['Transacción', short(txHash), true],
         ])}
         ${explorerUrl ? button(explorerUrl, 'Ver transacción en Etherscan') : ''}
-        ${callout(`Cualquier persona con cuenta en DocBlockSign puede comprobar que el archivo es auténtico subiéndolo en <a href="${verifyLink}" style="color:${C.primary};font-weight:700;">DocBlockSign → Verificar</a>. Si alguien cambia aunque sea un carácter, la verificación fallará.`, C.cyan, '🔎')}
+        ${callout(`Cualquier usuario de DocBlockSign puede comprobar que el archivo es auténtico en <a href="${verifyLink}" style="color:${C.primary};font-weight:700;">Verificar</a>. Si alguien cambia aunque sea un carácter, la verificación fallará.`, C.cyan, 'Cómo se verifica')}
         ${p('Guarda este correo como comprobante de tu firma.', `font-size:13px;color:${C.hint};`)}`,
     }),
   });
@@ -549,7 +545,7 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
   const rows = [
     ['Documento', safeTitle],
     ['Enviado por', `${safeSender}<br><span style="font-weight:500;color:${C.hint};">${escapeHtml(sender.email)}</span>`],
-    ['Estado', signed ? '✅ Firmado y registrado en blockchain' : '⏳ Pendiente de firma'],
+    ['Estado', signed ? 'Firmado y registrado en blockchain' : 'Pendiente de firma'],
     ['Huella SHA-256', short(hash), true],
   ];
   if (signed) {
@@ -576,19 +572,18 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
       `\nVerifica su autenticidad: ${verifyLink}`,
     html: layout({
       preheader: `${sender.name || sender.email} te compartió un documento`,
-      accent: signed ? C.success : C.primary,
-      icon: '📄',
+      accent: review ? C.warning : C.primary,
       eyebrow: review ? 'Solicitud de revisión' : 'Documento compartido',
       title: review ? `Te pidieron revisar “${safeTitle}”` : `Te compartieron “${safeTitle}”`,
       body: `
         ${p(review
           ? `<strong>${safeSender}</strong> te envió este documento para que lo <strong>revises y lo apruebes o rechaces</strong>.`
           : `<strong>${safeSender}</strong> te envió este documento a través de DocBlockSign.`)}
-        ${inApp ? callout(`También está en tu <strong>bandeja de entrada</strong> de DocBlockSign${review ? ', donde puedes aprobarlo o rechazarlo' : ''}. <a href="${appLink}" style="color:${C.primary};font-weight:700;">Abrir DocBlockSign</a>`, C.primary, '📥') : ''}
-        ${note ? callout(note, C.primary, '💬') : ''}
+        ${note ? callout(note, C.primary, 'Mensaje') : ''}
+        ${inApp ? callout(`También está en tu bandeja de entrada de DocBlockSign${review ? ', donde puedes aprobarlo o rechazarlo' : ''}. <a href="${appLink}" style="color:${C.primary};font-weight:700;">Abrir DocBlockSign</a>`, C.primary) : ''}
         ${dataTable(rows)}
         ${attachment
-          ? p(`📎 El archivo va <strong>adjunto</strong> a este correo.`)
+          ? p('El archivo va <strong>adjunto</strong> a este correo.')
           : button(fileUrl, 'Descargar documento')}
         ${button(verifyLink, signed ? 'Verificar autenticidad' : 'Ver huella del documento', signed ? C.primary : C.cyan)}
         ${callout(
@@ -596,7 +591,7 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
             ? 'Para comprobar que nadie lo modificó, abre “Verificar autenticidad” y sube el archivo: DocBlockSign calcula su huella en tu navegador y la compara con la registrada en blockchain.'
             : 'Este documento todavía no está firmado. Su huella SHA-256 sirve para comprobar más adelante que el archivo no cambió.',
           C.cyan,
-          '🔎'
+          'Cómo se verifica'
         )}
         ${signed && explorerUrl ? p(`También puedes ver la transacción en <a href="${explorerUrl}" style="color:${C.primary};font-weight:700;">Etherscan</a>.`, `font-size:13px;color:${C.hint};`) : ''}
         ${p('Si no esperabas este correo, puedes ignorarlo. Responder a este mensaje le escribe directamente a quien te lo envió.', `font-size:12px;color:${C.hint};`)}`,
@@ -616,13 +611,12 @@ const sendShareResponseEmail = async ({ to, senderName, reviewer, title, decisio
     text: `${reviewer.name || reviewer.email} ${ok ? 'aprobó' : 'rechazó'} "${title}".${comment ? `\n\nComentario: ${comment}` : ''}`,
     html: layout({
       preheader: `${ok ? 'Aprobado' : 'Rechazado'}: ${title}`,
-      accent: ok ? C.success : C.danger || '#D32F2F',
-      icon: ok ? '✅' : '↩️',
+      accent: ok ? C.success : C.danger,
       eyebrow: 'Respuesta a tu solicitud',
       title: ok ? 'Documento aprobado' : 'Documento rechazado',
       body: `
         ${p(`Hola <strong>${escapeHtml(senderName || '')}</strong>, <strong>${who}</strong> ${ok ? 'aprobó' : 'rechazó'} <strong>“${safeTitle}”</strong>.`)}
-        ${comment ? callout(escapeHtml(comment).replace(/\r?\n/g, '<br>'), ok ? C.success : C.warning, '💬') : ''}
+        ${comment ? callout(escapeHtml(comment).replace(/\r?\n/g, '<br>'), ok ? C.success : C.warning, 'Comentario') : ''}
         ${button(`${cfg().frontend}/#/login`, 'Ver en mi bandeja')}`,
     }),
   });
