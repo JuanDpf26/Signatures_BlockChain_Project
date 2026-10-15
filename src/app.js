@@ -15,6 +15,7 @@ const { initKeys } = require('./services/keys.service');
 const keysRoutes = require('./routes/keysRoutes');
 const teamsRoutes = require('./routes/teamsRoutes');
 const inboxRoutes = require('./routes/inboxRoutes');
+const notificationsRoutes = require('./routes/notificationsRoutes');
 const { initCollab } = require('./services/collab.service');
 
 // Inicializar Blockchain
@@ -57,6 +58,7 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/keys', keysRoutes);
 app.use('/api/teams', teamsRoutes);
 app.use('/api/inbox', inboxRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

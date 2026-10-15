@@ -61,6 +61,15 @@ const initCollab = async () => {
       ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS deleted_by_sender BOOLEAN NOT NULL DEFAULT FALSE;
       ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS parent_id UUID;
 
+      -- Estado de las notificaciones (leída / archivada) por usuario
+      CREATE TABLE IF NOT EXISTS notification_state (
+        user_id   TEXT NOT NULL,
+        key       TEXT NOT NULL,
+        read_at   TIMESTAMPTZ,
+        archived  BOOLEAN NOT NULL DEFAULT FALSE,
+        PRIMARY KEY (user_id, key)
+      );
+
       -- Solo el backend las usa: se bloquea la API pública de Supabase
       ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
       ALTER TABLE team_members ENABLE ROW LEVEL SECURITY;
