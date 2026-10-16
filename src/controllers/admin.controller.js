@@ -280,7 +280,7 @@ const live = async (req, res) => {
       pool.query(
         `SELECT COUNT(*) FILTER (WHERE action IN ('auth.login','auth.google') AND result = 'permitido') logins,
                 COUNT(DISTINCT user_id) FILTER (WHERE result = 'permitido') people,
-                COUNT(*) FILTER (WHERE result = 'denegado') denied
+                COUNT(*) FILTER (WHERE result = 'denegado' AND action NOT IN ('auth.token_rejected', 'auth.logout')) denied
            FROM audit_logs
           WHERE created_at >= date_trunc('day', NOW() AT TIME ZONE 'America/Bogota') AT TIME ZONE 'America/Bogota'`
       ),
