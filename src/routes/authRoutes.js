@@ -35,6 +35,25 @@ router.get('/me', authMiddleware, async (req, res) => {
   }
 });
 
+// Latido de presencia: la app lo envía cada 45 s mientras está abierta
+const SECTION_MAX = 60;
+const PLATFORMS = ['web', 'android', 'ios', 'windows', 'macos', 'linux'];
+router.post('/heartbeat', authMiddleware, async (req, res) => {
+  const { touchPresence } = require('../services/account.service');
+  const { clientIp } = require('../services/audit.service');
+  const section = typeof req.body?.section === 'string' ? req.body.section.trim().slice(0, SECTION_MAX) : null;
+  const platform = PLATFORMS.includes(req.body?.platform) ? req.body.platform : null;
+  await touchPresence(req.user.id, { ip: clientIp(req), userAgent: req.headers['user-agent'], section, platform });
+  res.json({ ok: true, role: req.user.role || 'user' });
+});
+
+// Al cerrar sesión deja de aparecer como conectado
+router.post('/logout', authMiddleware, async (req, res) => {
+  const { clearPresence } = require('../services/account.service');
+  await clearPresence(req.user.id);
+  res.json({ ok: true });
+});
+
 router.get('/reset-password-redirect/:token', (req, res) => {
   const { token } = req.params;
   const flutterUrl = (process.env.APP_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');

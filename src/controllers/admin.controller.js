@@ -9,7 +9,7 @@
 const pool = require('../config/db');
 const crypto = require('crypto');
 const { logAudit } = require('../services/audit.service');
-const { forget } = require('../services/account.service');
+const { forget, clearPresence } = require('../services/account.service');
 
 const n = (v) => Number(v) || 0;
 
@@ -90,14 +90,15 @@ const listUsers = async (req, res) => {
       `SELECT u.id, u.name, u.email, u.is_email_verified, u.google_id IS NOT NULL AS google, u.role,
               COALESCE(u.suspended, false) AS suspended, u.created_at, u.last_login,
               (SELECT COUNT(*) FROM documents d WHERE d.user_id = u.id) AS documents,
-              (SELECT COUNT(*) FROM documents d WHERE d.user_id = u.id AND d.status IN ('signed','verified')) AS signed
+              (SELECT COUNT(*) FROM documents d WHERE d.user_id = u.id AND d.status IN ('signed','verified')) AS signed,
+              (SELECT EXTRACT(EPOCH FROM (NOW() - p.last_seen))::int FROM user_presence p WHERE p.user_id = u.id) AS seen_ago
          FROM users u ${w}
         ORDER BY u.created_at DESC
         LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
     return res.json({
-      users: r.rows.map((x) => ({ ...x, documents: n(x.documents), signed: n(x.signed) })),
+      users: r.rows.map((x) => ({ ...x, documents: n(x.documents), signed: n(x.signed), online: x.seen_ago != null && n(x.seen_ago) <= ONLINE_SECONDS })),
       pagination: { total, page, pages: Math.max(1, Math.ceil(total / limit)) },
     });
   } catch (err) {
@@ -117,6 +118,7 @@ const setSuspended = async (req, res) => {
     if (target.role === 'admin') return res.status(400).json({ error: 'No se puede suspender a otro administrador desde la app' });
     await pool.query('UPDATE users SET suspended = $1, suspended_at = CASE WHEN $1 THEN NOW() ELSE NULL END WHERE id = $2', [suspended, target.id]);
     forget(target.id); // la suspensión aplica en la siguiente petición
+    if (suspended) clearPresence(target.id);
     const reason = String(req.body?.reason || '').trim().slice(0, 300);
     res.locals.auditDetail = { target: target.email, suspended, reason: reason || null };
     logAudit({
@@ -252,4 +254,117 @@ const runRemindersNow = async (req, res) => {
   return res.json({ message: sent ? `${sent} recordatorios enviados` : 'No hay recordatorios pendientes por enviar', sent });
 };
 
-module.exports = { overview, listUsers, setSuspended, resendVerification, audit, health, runRemindersNow };
+// ─────────────────────────────────────────
+// EN VIVO
+// ─────────────────────────────────────────
+const ONLINE_SECONDS = 120; // la app envía un latido cada 45 s
+const PRESENCE_SQL = `
+  SELECT p.user_id AS id, u.name, u.email, u.role, u.avatar_url,
+         p.section, p.platform, p.ip, p.first_seen, p.last_seen,
+         EXTRACT(EPOCH FROM (NOW() - p.last_seen))::int AS seconds_ago,
+         EXTRACT(EPOCH FROM (p.last_seen - p.first_seen))::int AS session_seconds
+    FROM user_presence p JOIN users u ON u.id = p.user_id`;
+
+// GET /api/admin/live
+const live = async (req, res) => {
+  try {
+    const [people, events, today] = await Promise.all([
+      pool.query(`${PRESENCE_SQL} WHERE p.last_seen > NOW() - INTERVAL '15 minutes' ORDER BY p.last_seen DESC LIMIT 100`),
+      pool.query(
+        `SELECT a.id, a.created_at, a.action, a.description, a.result, a.ip,
+                COALESCE(a.actor_email, u.email) AS email, u.name
+           FROM audit_logs a LEFT JOIN users u ON u.id::text = a.user_id::text
+          WHERE a.action <> 'auth.token_rejected'
+          ORDER BY a.created_at DESC LIMIT 20`
+      ),
+      pool.query(
+        `SELECT COUNT(*) FILTER (WHERE action IN ('auth.login','auth.google') AND result = 'permitido') logins,
+                COUNT(DISTINCT user_id) FILTER (WHERE result = 'permitido') people,
+                COUNT(*) FILTER (WHERE result = 'denegado') denied
+           FROM audit_logs
+          WHERE created_at >= date_trunc('day', NOW() AT TIME ZONE 'America/Bogota') AT TIME ZONE 'America/Bogota'`
+      ),
+    ]);
+    const rows = people.rows.map((r) => ({ ...r, online: n(r.seconds_ago) <= ONLINE_SECONDS, seconds_ago: n(r.seconds_ago), session_seconds: n(r.session_seconds) }));
+    const online = rows.filter((r) => r.online);
+    return res.json({
+      online: online.length,
+      onlineUsers: online.filter((r) => r.role !== 'admin').length,
+      onlineAdmins: online.filter((r) => r.role === 'admin').length,
+      recent: rows.length,
+      today: { logins: n(today.rows[0].logins), people: n(today.rows[0].people), denied: n(today.rows[0].denied) },
+      people: rows,
+      events: events.rows,
+      serverTime: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('ERROR ADMIN LIVE:', err);
+    return res.status(500).json({ error: 'No se pudo cargar la actividad en vivo' });
+  }
+};
+
+// GET /api/admin/users/:id — ficha de la cuenta (sin contenido de documentos)
+const userDetail = async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const u = (await pool.query(
+      `SELECT u.id, u.name, u.email, u.phone, u.role, u.avatar_url, u.is_email_verified, u.google_id IS NOT NULL AS google,
+              COALESCE(u.suspended, false) AS suspended, u.suspended_at, u.created_at, u.last_login,
+              COALESCE(u.email_reminders, true) AS email_reminders,
+              (SELECT COUNT(*) FROM documents d WHERE d.user_id = u.id) AS documents,
+              (SELECT COUNT(*) FROM documents d WHERE d.user_id = u.id AND d.status IN ('signed','verified')) AS signed,
+              (SELECT COUNT(*) FROM documents d WHERE d.user_id = u.id AND d.status = 'pending') AS pending
+         FROM users u WHERE u.id::text = $1`, [id])).rows[0];
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+    const [presence, activity, stats] = await Promise.all([
+      pool.query(`${PRESENCE_SQL} WHERE p.user_id::text = $1`, [id]),
+      pool.query(
+        `SELECT id, created_at, action, description, result, ip FROM audit_logs
+          WHERE user_id::text = $1 ORDER BY created_at DESC LIMIT 25`, [id]),
+      pool.query(
+        `SELECT COUNT(*) FILTER (WHERE action IN ('auth.login','auth.google') AND result = 'permitido' AND created_at > NOW() - INTERVAL '30 days') logins30,
+                COUNT(*) FILTER (WHERE result = 'denegado' AND created_at > NOW() - INTERVAL '30 days') denied30,
+                COUNT(DISTINCT ip) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') ips30
+           FROM audit_logs WHERE user_id::text = $1`, [id]),
+    ]);
+    const p = presence.rows[0];
+    return res.json({
+      user: { ...u, documents: n(u.documents), signed: n(u.signed), pending: n(u.pending) },
+      presence: p ? { ...p, seconds_ago: n(p.seconds_ago), session_seconds: n(p.session_seconds), online: n(p.seconds_ago) <= ONLINE_SECONDS } : null,
+      stats: { logins30: n(stats.rows[0].logins30), denied30: n(stats.rows[0].denied30), ips30: n(stats.rows[0].ips30) },
+      activity: activity.rows,
+    });
+  } catch (err) {
+    console.error('ERROR ADMIN USER DETAIL:', err);
+    return res.status(500).json({ error: 'No se pudo cargar la cuenta' });
+  }
+};
+
+// POST /api/admin/users/:id/logout — cierra todas las sesiones abiertas de esa cuenta
+const forceLogout = async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    if (id === String(req.user.id)) return res.status(400).json({ error: 'Para cerrar tu propia sesión usa "Cerrar sesión"' });
+    const t = (await pool.query('SELECT id, email, role FROM users WHERE id::text = $1', [id])).rows[0];
+    if (!t) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (t.role === 'admin') return res.status(400).json({ error: 'No se puede cerrar la sesión de otro superusuario desde la app' });
+    await pool.query('UPDATE users SET session_version = COALESCE(session_version, 0) + 1 WHERE id = $1', [t.id]);
+    forget(t.id);
+    await clearPresence(t.id);
+    const reason = String(req.body?.reason || '').trim().slice(0, 300);
+    logAudit({
+      userId: req.user.id,
+      action: 'admin.force_logout',
+      description: `Cerró las sesiones de ${t.email}`,
+      resource: String(t.id),
+      result: 'permitido',
+      detail: { reason: reason || null },
+    });
+    return res.json({ message: `Se cerraron las sesiones de ${t.email}. Tendrá que volver a ingresar.` });
+  } catch (err) {
+    console.error('ERROR ADMIN FORCE LOGOUT:', err);
+    return res.status(500).json({ error: 'No se pudo cerrar la sesión' });
+  }
+};
+
+module.exports = { overview, listUsers, setSuspended, resendVerification, audit, health, runRemindersNow, live, userDetail, forceLogout };

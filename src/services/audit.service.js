@@ -79,6 +79,7 @@ const RULES = [
   ['POST', /^\/api\/auth\/resend-verification$/, 'auth.resend_verification', 'Reenvío de verificación'],
   ['POST', /^\/api\/auth\/login$/, 'auth.login', 'Inicio de sesión'],
   ['POST', /^\/api\/auth\/google$/, 'auth.google', 'Inicio de sesión con Google'],
+  ['POST', /^\/api\/auth\/logout$/, 'auth.logout', 'Cerró sesión'],
   ['POST', /^\/api\/auth\/forgot-password$/, 'auth.forgot_password', 'Solicitud de recuperación de contraseña'],
   ['POST', /^\/api\/auth\/reset-password$/, 'auth.reset_password', 'Cambio de contraseña por enlace'],
   ['POST', /^\/api\/documents\/upload$/, 'document.upload', 'Subió un documento'],
@@ -154,7 +155,9 @@ const auditMiddleware = (req, res, next) => {
       userId,
       actorEmail: email || body.user?.email || null,
       action: rule ? rule[2] : 'auth.token_rejected',
-      description: rule ? rule[3] : 'Token rechazado o vencido',
+      description: rule
+        ? (['auth.login', 'auth.google'].includes(rule[2]) && body.user?.role === 'admin' ? `${rule[3]} (superusuario)` : rule[3])
+        : 'Token rechazado o vencido',
       resource,
       result,
       statusCode: res.statusCode,

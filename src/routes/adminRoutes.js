@@ -6,7 +6,10 @@ const c = require('../controllers/admin.controller');
 
 router.use(authMiddleware, requireAdmin);
 router.get('/overview', c.overview);
+router.get('/live', c.live);
 router.get('/users', c.listUsers);
+router.get('/users/:id', c.userDetail);
+router.post('/users/:id/logout', c.forceLogout);
 router.post('/users/:id/suspend', c.setSuspended);
 router.post('/users/:id/resend-verification', c.resendVerification);
 router.get('/audit', c.audit);

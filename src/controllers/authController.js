@@ -15,8 +15,10 @@ const { verifyGoogleToken } = require('../services/google.service');
 // ────────────────────────────────────────────────
 // El rol va en el token solo para que la app sepa qué interfaz abrir;
 // los permisos siempre se revisan contra la base de datos (authMiddleware).
-const generateToken = (userId, role = 'user') =>
-  jwt.sign({ id: userId, role: role || 'user' }, process.env.JWT_SECRET, { expiresIn: '7d' });
+// sv = versión de sesión: si un administrador cierra la sesión de alguien, sube
+// y los tokens anteriores dejan de servir.
+const generateToken = (userId, role = 'user', sv = 0) =>
+  jwt.sign({ id: userId, role: role || 'user', sv: Number(sv) || 0 }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -261,7 +263,7 @@ const login = async (req, res) => {
 
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    const token = generateToken(user.id, user.role);
+    const token = generateToken(user.id, user.role, user.session_version);
 
     return res.json({
       message: 'Inicio de sesión exitoso',
@@ -353,7 +355,7 @@ const googleAuth = async (req, res) => {
     if (user.suspended) {
       return res.status(403).json({ error: 'Tu cuenta está suspendida. Escribe al administrador de DocBlockSign.' });
     }
-    const token = generateToken(user.id, user.role);
+    const token = generateToken(user.id, user.role, user.session_version);
 
     return res.json({
       message: 'Autenticación con Google exitosa',
