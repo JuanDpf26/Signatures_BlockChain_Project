@@ -17,11 +17,12 @@ const n = (v) => Number(v) || 0;
 const overview = async (req, res) => {
   try {
     const [users, docs, shares, cosign, daily, byMonth, failed] = await Promise.all([
-      pool.query(`SELECT COUNT(*) total,
-                         COUNT(*) FILTER (WHERE is_email_verified) verified,
-                         COUNT(*) FILTER (WHERE COALESCE(suspended,false)) suspended,
-                         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') new_7d,
-                         COUNT(*) FILTER (WHERE last_login > NOW() - INTERVAL '7 days') active_7d,
+      // Usuarios finales; los superusuarios se cuentan aparte
+      pool.query(`SELECT COUNT(*) FILTER (WHERE role <> 'admin') total,
+                         COUNT(*) FILTER (WHERE role <> 'admin' AND is_email_verified) verified,
+                         COUNT(*) FILTER (WHERE role <> 'admin' AND COALESCE(suspended,false)) suspended,
+                         COUNT(*) FILTER (WHERE role <> 'admin' AND created_at > NOW() - INTERVAL '7 days') new_7d,
+                         COUNT(*) FILTER (WHERE role <> 'admin' AND last_login > NOW() - INTERVAL '7 days') active_7d,
                          COUNT(*) FILTER (WHERE role = 'admin') admins
                     FROM users`),
       pool.query(`SELECT COUNT(*) total,
@@ -80,7 +81,8 @@ const listUsers = async (req, res) => {
     const f = String(req.query.filter || 'all');
     if (f === 'unverified') where.push('NOT u.is_email_verified');
     if (f === 'suspended') where.push('COALESCE(u.suspended, false)');
-    if (f === 'admins') where.push("u.role = 'admin'");
+    // Superusuarios solo en su filtro; el resto de la lista son usuarios finales
+    where.push(f === 'admins' ? "u.role = 'admin'" : "u.role <> 'admin'");
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = n((await pool.query(`SELECT COUNT(*) FROM users u ${w}`, params)).rows[0].count);
     params.push(limit, (page - 1) * limit);

@@ -50,16 +50,17 @@ app.use(rateLimit({
 }));
 
 // Rutas
+const userOnly = require('./middleware/userOnly'); // superusuarios fuera de las funciones de documentos
 app.use('/api/auth', authRoutes);
-app.use('/api/documents', documentRoutes);
+app.use('/api/documents', userOnly, documentRoutes);
 app.use('/api/profile', profileRoutes);
-app.use('/api/signing', signingRoutes);
-app.use('/api/agent', agentRoutes);
-app.use('/api/audit', auditRoutes);
-app.use('/api/keys', keysRoutes);
-app.use('/api/teams', teamsRoutes);
-app.use('/api/inbox', inboxRoutes);
-app.use('/api/notifications', notificationsRoutes);
+app.use('/api/signing', userOnly, signingRoutes);
+app.use('/api/agent', userOnly, agentRoutes);
+app.use('/api/audit', userOnly, auditRoutes);
+app.use('/api/keys', userOnly, keysRoutes);
+app.use('/api/teams', userOnly, teamsRoutes);
+app.use('/api/inbox', userOnly, inboxRoutes);
+app.use('/api/notifications', userOnly, notificationsRoutes);
 app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Health check

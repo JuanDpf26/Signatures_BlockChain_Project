@@ -7,6 +7,7 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "test-email": "node scripts/probar-correo.js",
+    "superusuario": "node scripts/crear-superusuario.js",
     "verificar": "node scripts/verificar-en-cadena.js",
     "gmail-token": "node scripts/gmail-token.js",
     "test": "node --test tests/*.test.js"
