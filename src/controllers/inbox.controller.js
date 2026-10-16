@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const pool = require('../config/db');
 const { getUser } = require('../services/collab.service');
 const { sendShareResponseEmail, sendDocumentEmail } = require('../services/email.service');
+const storage = require('../services/storage.service');
 
 const BOXES = ['received', 'sent', 'archived', 'flagged', 'deleted'];
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[a-z]{2,}$/i;
@@ -139,7 +140,7 @@ const getInboxItem = async (req, res) => {
     const document = doc && {
       id: doc.id,
       title: doc.title,
-      file_url: doc.file_url,
+      file_url: await storage.signedUrl(doc.file_url),
       file_hash: doc.file_hash,
       status: doc.status,
       owner_name: doc.owner_name,
@@ -314,7 +315,7 @@ const docForEmail = async (documentId) => {
       blockNumber: m.blockchain_block ?? null,
       explorerUrl: m.blockchain_explorer || null,
       signedAt: m.signed_at || null,
-      fileUrl: d.file_url,
+      fileUrl: await storage.signedUrl(d.file_url, { ttl: storage.EMAIL_TTL }),
     },
   };
 };

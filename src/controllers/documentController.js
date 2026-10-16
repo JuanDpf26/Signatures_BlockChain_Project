@@ -9,6 +9,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '') }); // tolera espacios o comillas pegados en el panel de Render
 const { logAudit } = require('../services/audit.service');
 const { sendDocumentEmail } = require('../services/email.service');
+const storage = require('../services/storage.service');
 
 /**
  * Multer entrega el nombre del archivo leído como latin1, así que los nombres
@@ -367,7 +368,7 @@ const uploadDocument = async (req, res) => {
 
     return res.status(201).json({
       message: 'Documento subido exitosamente. Analizando con IA...',
-      document: doc,
+      document: { ...doc, file_url: await storage.signedUrl(doc.file_url) },
     });
   } catch (err) {
     console.error('ERROR UPLOAD:', err);
@@ -422,7 +423,8 @@ const getDocuments = async (req, res) => {
     query += ` ORDER BY ${orderBy} LIMIT $${i} OFFSET $${i + 1}`;
     params.push(limit, (page - 1) * limit);
     const result = await pool.query(query, params);
-    return res.json({ documents: result.rows, pagination: { total, page, limit, pages: Math.ceil(total / limit), sort: ORDERS[sort] ? sort : 'recent' } });
+    const documents = await storage.signDocs(result.rows);
+    return res.json({ documents, pagination: { total, page, limit, pages: Math.ceil(total / limit), sort: ORDERS[sort] ? sort : 'recent' } });
   } catch (err) {
     console.error('ERROR GET DOCS:', err);
     return res.status(500).json({ error: 'Error al obtener documentos' });
@@ -433,7 +435,9 @@ const getDocument = async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM documents WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     if (!result.rows.length) return res.status(404).json({ error: 'Documento no encontrado' });
-    return res.json({ document: result.rows[0] });
+    const doc = result.rows[0];
+    const [signedDoc] = await storage.signDocs([doc]);
+    return res.json({ document: signedDoc });
   } catch (err) { return res.status(500).json({ error: 'Error al obtener documento' }); }
 };
 
@@ -644,7 +648,8 @@ const replaceDocumentFile = async (req, res) => {
     if (String(req.query.analyze) !== '0') generateDescriptionWithGroq(id, newMeta).catch(console.error);
 
     res.locals.auditDetail = { version, previous_hash: doc.file_hash.slice(0, 16), new_hash: fileHash.slice(0, 16) };
-    return res.json({ message: `Archivo reemplazado. Ahora es la versión ${version}.`, version, document: updated.rows[0] });
+    const updatedDoc = updated.rows[0];
+    return res.json({ message: `Archivo reemplazado. Ahora es la versión ${version}.`, version, document: (await storage.signDocs([updatedDoc]))[0] });
   } catch (err) {
     console.error('ERROR REPLACE FILE:', err);
     return res.status(500).json({ error: 'Error al reemplazar el archivo' });
@@ -727,9 +732,7 @@ const sendDocumentByEmail = async (req, res) => {
         attachNote = 'El archivo es muy grande para adjuntarlo; se envió el enlace de descarga.';
       } else {
         try {
-          const r = await fetch(doc.file_url);
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const content = Buffer.from(await r.arrayBuffer());
+          const content = await storage.download(doc.file_url);
           const ext = meta.extension ? `.${meta.extension}` : '';
           const filename = doc.title.toLowerCase().endsWith(ext.toLowerCase()) ? doc.title : `${doc.title}${ext}`;
           attachment = { filename, content, contentType: meta.mime_type || undefined };
@@ -749,7 +752,7 @@ const sendDocumentByEmail = async (req, res) => {
       blockNumber: meta.blockchain_block ?? null,
       explorerUrl: meta.blockchain_explorer || null,
       signedAt: meta.signed_at || null,
-      fileUrl: doc.file_url,
+      fileUrl: await storage.signedUrl(doc.file_url, { ttl: storage.EMAIL_TTL }),
     };
 
     // Correo: personas con cuenta (también lo verán en su bandeja) y personas sin cuenta.

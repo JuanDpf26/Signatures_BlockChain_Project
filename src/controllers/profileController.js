@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const bcrypt = require('bcrypt');
 const { createClient } = require('@supabase/supabase-js');
 const sharp = require('sharp');
+const storage = require('../services/storage.service');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -228,7 +229,7 @@ const uploadSignature = async (req, res) => {
 
     return res.json({
       message: 'Firma guardada exitosamente',
-      signature_url: signatureUrl,
+      signature_url: await storage.signedUrl(signatureUrl, { bucket: 'signatures' }),
     });
   } catch (err) {
     console.error('ERROR UPLOAD SIGNATURE:', err);
@@ -252,7 +253,8 @@ const getSignature = async (req, res) => {
       return res.status(404).json({ error: 'No tienes firma guardada' });
     }
 
-    return res.json({ signature: result.rows[0] });
+    const sig = result.rows[0];
+    return res.json({ signature: { ...sig, signature_url: await storage.signedUrl(sig.signature_url, { bucket: 'signatures' }) } });
   } catch (err) {
     console.error('ERROR GET SIGNATURE:', err);
     return res.status(500).json({ error: 'Error al obtener firma' });

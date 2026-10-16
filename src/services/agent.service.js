@@ -22,6 +22,7 @@ const { getNetworkInfo } = require('./blockchain.service');
 
 const groq = new Groq({ apiKey: (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '') }); // tolera espacios o comillas pegados en el panel de Render
 const mammoth = require('mammoth');
+const storage = require('./storage.service');
 
 const MAX_TOOL_ROUNDS = 5;
 const STATUS_ES = { pending: 'pendiente', signed: 'firmado', verified: 'verificado', rejected: 'rechazado' };
@@ -200,9 +201,7 @@ const getDocumentText = async (doc) => {
   const m = doc.metadata || {};
   let text = '';
   try {
-    const resp = await fetch(doc.file_url, { signal: AbortSignal.timeout(15000) });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const buffer = Buffer.from(await resp.arrayBuffer());
+    const buffer = await storage.download(doc.file_url);
     if ((m.extension || '').toLowerCase() === 'pdf' || m.mime_type === 'application/pdf') {
       text = (await parsePdf(buffer)).text || '';
     } else {
