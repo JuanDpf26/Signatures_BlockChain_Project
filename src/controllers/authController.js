@@ -274,6 +274,7 @@ const login = async (req, res) => {
         email: user.email,
         avatar: user.avatar_url,
         role: user.role || 'user',
+        must_change_password: !!user.must_change_password,
       },
     });
   } catch (err) {
@@ -446,6 +447,7 @@ const resetPassword = async (req, res) => {
          SET password = $1,
              reset_token = NULL,
              reset_token_expires = NULL,
+             must_change_password = FALSE,
              is_email_verified = true,
              email_verification_token = NULL,
              email_verification_expires = NULL

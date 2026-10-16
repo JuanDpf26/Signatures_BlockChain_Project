@@ -5,6 +5,10 @@ module.exports = async (req, res, next) => {
   try {
     const st = await accountState(req.user.id);
     if (st.role !== 'admin') return res.status(403).json({ error: 'Solo los administradores pueden ver esta sección' });
+    // Contraseña temporal: primero hay que cambiarla
+    if (st.mustChangePassword) {
+      return res.status(403).json({ error: 'Cambia tu contraseña temporal para entrar a la consola.', code: 'must_change_password' });
+    }
     next();
   } catch (_) {
     return res.status(500).json({ error: 'No se pudo comprobar el rol' });

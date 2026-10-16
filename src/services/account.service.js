@@ -15,6 +15,7 @@ const initAccount = async () => {
       ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS reminder_count INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE document_shares ADD COLUMN IF NOT EXISTS last_reminded_at TIMESTAMPTZ;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
       CREATE TABLE IF NOT EXISTS user_presence (
         user_id    UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -39,9 +40,9 @@ const accountState = async (userId) => {
   const key = String(userId);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL) return hit.value;
-  const r = await pool.query('SELECT role, suspended, COALESCE(session_version, 0) AS sv FROM users WHERE id::text = $1', [key]);
+  const r = await pool.query('SELECT role, suspended, COALESCE(session_version, 0) AS sv, COALESCE(must_change_password, false) AS mcp FROM users WHERE id::text = $1', [key]);
   const value = r.rows[0]
-    ? { role: r.rows[0].role || 'user', suspended: !!r.rows[0].suspended, sessionVersion: Number(r.rows[0].sv) || 0, exists: true }
+    ? { role: r.rows[0].role || 'user', suspended: !!r.rows[0].suspended, sessionVersion: Number(r.rows[0].sv) || 0, mustChangePassword: !!r.rows[0].mcp, exists: true }
     : { exists: false };
   cache.set(key, { at: Date.now(), value });
   return value;

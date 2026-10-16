@@ -338,9 +338,10 @@ const changePassword = async (req, res) => {
 
     const newHash = await bcrypt.hash(newPassword, 12);
     await pool.query(
-      'UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2',
+      'UPDATE users SET password = $1, must_change_password = FALSE, updated_at = NOW() WHERE id = $2',
       [newHash, userId]
     );
+    require('../services/account.service').forget(userId);
 
     return res.json({ message: 'Contraseña actualizada exitosamente' });
   } catch (err) {

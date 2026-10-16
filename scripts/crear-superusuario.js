@@ -9,6 +9,10 @@
 // No existe forma de crear uno desde la app; solo con este script (o SQL),
 // con acceso al .env del backend.
 //
+//   npm run superusuario -- --temporal Nombre correo@dominio.com
+//       → crea la cuenta con una contraseña temporal que se muestra una sola vez;
+//         la persona debe cambiarla al primer ingreso.
+//
 // La contraseña se escribe aquí, en la terminal; nunca la pegues en un chat.
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const readline = require('readline');
@@ -84,10 +88,29 @@ const crear = async () => {
   console.log('  Ingresa en la app con ese correo y contraseña; abrirá la consola de administración.');
 };
 
+const temporal = async (name, email) => {
+  email = String(email || '').toLowerCase();
+  if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Uso: --temporal "Nombre" correo@dominio.com');
+  const ex = await pool.query('SELECT role FROM users WHERE LOWER(email) = $1', [email]);
+  if (ex.rows.length) throw new Error('Ese correo ya tiene una cuenta.');
+  // 16 caracteres con mayúsculas, minúsculas y números
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  let pass = '';
+  while (!strong(pass)) pass = Array.from(require('crypto').randomBytes(16), (b) => abc[b % abc.length]).join('');
+  await pool.query(
+    `INSERT INTO users (name, email, password, is_email_verified, role, email_reminders, must_change_password)
+     VALUES ($1, $2, $3, TRUE, 'admin', FALSE, TRUE)`,
+    [name, email, await bcrypt.hash(pass, 12)]
+  );
+  console.log(`\n✔ Superusuario ${name} <${email}>`);
+  console.log(`  Contraseña temporal (se pide cambiarla al primer ingreso): ${pass}\n`);
+};
+
 (async () => {
   try {
     await initAccount(); // asegura las columnas role/suspended
     if (args[0] === '--listar') await listar();
+    else if (args[0] === '--temporal') await temporal(args[1], args[2]);
     else if (args[0] === '--quitar') await quitar(args[1] || '');
     else await crear();
   } catch (e) {
