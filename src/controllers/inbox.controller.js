@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { getUser } = require('../services/collab.service');
 const { sendShareResponseEmail, sendDocumentEmail } = require('../services/email.service');
 const storage = require('../services/storage.service');
+const { publicCosign } = require('./cosign.controller');
 
 const BOXES = ['received', 'sent', 'archived', 'flagged', 'deleted'];
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[a-z]{2,}$/i;
@@ -79,7 +80,7 @@ const inboxSummary = async (req, res) => {
     if (!me) return res.json({ unread: 0, pending_reviews: 0, flagged: 0 });
     const r = await pool.query(
       `SELECT COUNT(*) FILTER (WHERE status = 'sent' AND archived_by_recipient = FALSE)::int AS unread,
-              COUNT(*) FILTER (WHERE kind = 'review' AND status IN ('sent','read') AND archived_by_recipient = FALSE)::int AS pending_reviews,
+              COUNT(*) FILTER (WHERE kind IN ('review','sign') AND status IN ('sent','read') AND archived_by_recipient = FALSE)::int AS pending_reviews,
               COUNT(*) FILTER (WHERE flagged)::int AS flagged
          FROM document_shares
         WHERE (recipient_id = $1 OR lower(recipient_email) = $2) AND deleted_by_recipient = FALSE`,
@@ -149,6 +150,7 @@ const getInboxItem = async (req, res) => {
       pages: m.pages || null,
       category: (m.category_source === 'manual' ? m.category : m.ai_category || m.category) || 'Documento',
       description: m.user_description || m.ai_description || null,
+      cosign: publicCosign(m.cosign) || null,
       blockchain_tx: m.blockchain_tx || doc.blockchain_tx || null,
       blockchain_block: m.blockchain_block || null,
       blockchain_explorer: m.blockchain_explorer || null,

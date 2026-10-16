@@ -74,12 +74,17 @@ const finalizeSignature = async (docId, txInfo) => {
   if (upd.rowCount === 0) return false;
 
   // public_key guarda la clave pública del firmante (antes guardaba el correo)
-  const pk = meta.signer_id ? await keys.getPublicKey(meta.signer_id).catch(() => null) : null;
-  await pool.query(
-    `INSERT INTO signatures (document_id, signer_id, signature_hash, public_key, blockchain_tx, is_valid, signed_at)
-     VALUES ($1, $2, $3, $4, $5, true, NOW())`,
-    [docId, meta.signer_id, meta.signature_hash, pk?.public_key_pem || meta.signer_email, txInfo.txHash]
-  );
+  const signedBy = meta.cosign?.status === 'completed'
+    ? meta.cosign.signers.map((s) => ({ id: s.user_id, hash: s.signature_hash, email: s.email }))
+    : [{ id: meta.signer_id, hash: meta.signature_hash, email: meta.signer_email }];
+  for (const s of signedBy) {
+    const pk = s.id ? await keys.getPublicKey(s.id).catch(() => null) : null;
+    await pool.query(
+      `INSERT INTO signatures (document_id, signer_id, signature_hash, public_key, blockchain_tx, is_valid, signed_at)
+       VALUES ($1, $2, $3, $4, $5, true, NOW())`,
+      [docId, s.id, s.hash, pk?.public_key_pem || s.email, txInfo.txHash]
+    );
+  }
   console.log(`✅ [Blockchain] Documento ${docId} confirmado en el bloque ${txInfo.blockNumber}`);
   logAudit({
     userId: meta.signer_id,
@@ -109,6 +114,50 @@ const finalizeSignature = async (docId, txInfo) => {
     .then(() => console.log(`[email] comprobante de firma enviado (${docId})`))
     .catch((err) => console.error('[email] comprobante de firma: ERROR', err.message));
   return true;
+};
+
+/**
+ * Envía la transacción y confirma el bloque en segundo plano.
+ * La usa la firma con varios firmantes (y sirve para reintentos).
+ */
+const registerOnChain = async (doc, { signatureHash, signerEmail, metaPatch = {} }) => {
+  if (!isReady()) {
+    const msg = 'La conexión con blockchain no está configurada en el servidor.';
+    await failSignature(doc.id, msg);
+    throw new Error(msg);
+  }
+  if (await isAlreadyRegistered(doc.file_hash)) {
+    const msg = 'Un archivo con este mismo contenido ya está registrado en blockchain.';
+    await failSignature(doc.id, msg);
+    throw new Error(msg);
+  }
+  await mergeMeta(doc.id, {
+    ...metaPatch,
+    blockchain_status: 'sending',
+    blockchain_error: null,
+    sign_started_at: new Date().toISOString(),
+  });
+  let sent;
+  try {
+    sent = await sendSignatureTx({ documentHash: doc.file_hash, signatureHash, signerEmail, documentTitle: doc.title });
+  } catch (err) {
+    await failSignature(doc.id, err.message);
+    throw err;
+  }
+  await mergeMeta(doc.id, {
+    blockchain_status: 'confirming',
+    blockchain_tx: sent.txHash,
+    blockchain_explorer: sent.explorerUrl,
+    blockchain_sent_at: new Date().toISOString(),
+  });
+  sent.tx
+    .wait(1)
+    .then(async (receipt) => {
+      if (receipt && receipt.status === 1) await finalizeSignature(doc.id, await getTxStatus(sent.txHash));
+      else await failSignature(doc.id, 'La transacción fue revertida por el contrato');
+    })
+    .catch((err) => failSignature(doc.id, chainErrorMessage(err)).catch(() => {}));
+  return sent;
 };
 
 const failSignature = async (docId, message) => {
@@ -148,6 +197,13 @@ const signDocument = async (req, res) => {
         message: 'La firma de este documento ya está en proceso',
         status: meta.blockchain_status,
         txHash: meta.blockchain_tx || null,
+      });
+    }
+    if (meta.cosign && ['collecting', 'completed'].includes(meta.cosign.status)) {
+      return res.status(409).json({
+        error: meta.cosign.status === 'collecting'
+          ? 'Este documento tiene una solicitud de firmas en curso: se registra en blockchain cuando firmen todos.'
+          : 'Todos los firmantes ya firmaron. Usa "Registrar en blockchain" en el detalle del documento.',
       });
     }
     if (meta.revoked) {
@@ -572,6 +628,7 @@ const revokeSignature = async (req, res) => {
 };
 
 module.exports = {
+  registerOnChain,
   buildVerification,
   signDocument,
   getSigningStatus,

@@ -45,6 +45,7 @@ const sendLimiter = rateLimit({
 router.get('/stats', getStats);
 router.post('/upload', upload.single('file'), uploadDocument);
 router.get('/', getDocuments);
+router.get('/:id/signed-pdf', require('../controllers/certificate.controller').signedPdf);
 router.get('/:id', getDocument);
 router.post('/:id/reanalyze', reanalyzeDocument);
 router.patch('/:id', updateDocumentMeta);

@@ -79,4 +79,13 @@ const signDocs = async (docs, { ttl = HOUR } = {}) => {
   });
 };
 
-module.exports = { pathFromUrl, signedUrl, signRows, signDocs, download, HOUR, EMAIL_TTL };
+/** Sube (o reemplaza) un archivo generado por el servidor y devuelve un enlace firmado */
+const uploadAndSign = async (path, bytes, { bucket = 'documents', contentType = 'application/pdf', ttl = HOUR } = {}) => {
+  const { error } = await supabase.storage.from(bucket).upload(path, bytes, { contentType, upsert: true });
+  if (error) throw new Error(error.message || 'No se pudo guardar el archivo');
+  const { data, error: e2 } = await supabase.storage.from(bucket).createSignedUrl(path, ttl);
+  if (e2 || !data?.signedUrl) throw new Error(e2?.message || 'No se pudo crear el enlace');
+  return data.signedUrl;
+};
+
+module.exports = { pathFromUrl, signedUrl, signRows, signDocs, download, uploadAndSign, HOUR, EMAIL_TTL };

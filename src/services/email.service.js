@@ -555,13 +555,14 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
   }
 
   const review = kind === 'review';
+  const sign = kind === 'sign';
   const appLink = `${cfg().frontend}/#/login`;
   return sendEmail({
     to,
     bcc,
     replyTo: sender.email,
     attachments: attachment ? [attachment] : undefined,
-    subject: subject || (review ? `${sender.name || sender.email} te pidió revisar "${title}"` : `${sender.name || sender.email} te compartió "${title}"`),
+    subject: subject || (sign ? `${sender.name || sender.email} te pidió firmar "${title}"` : review ? `${sender.name || sender.email} te pidió revisar "${title}"` : `${sender.name || sender.email} te compartió "${title}"`),
     text:
       `${sender.name || sender.email} (${sender.email}) te compartió "${title}" por DocBlockSign.\n\n` +
       (message ? `Mensaje:\n${message}\n\n` : '') +
@@ -572,15 +573,17 @@ const sendDocumentEmail = async ({ to, bcc, sender, doc, message, subject, attac
       `\nVerifica su autenticidad: ${verifyLink}`,
     html: layout({
       preheader: `${sender.name || sender.email} te compartió un documento`,
-      accent: review ? C.warning : C.primary,
-      eyebrow: review ? 'Solicitud de revisión' : 'Documento compartido',
-      title: review ? `Te pidieron revisar “${safeTitle}”` : `Te compartieron “${safeTitle}”`,
+      accent: sign ? C.success : review ? C.warning : C.primary,
+      eyebrow: sign ? 'Firma requerida' : review ? 'Solicitud de revisión' : 'Documento compartido',
+      title: sign ? `Te pidieron firmar “${safeTitle}”` : review ? `Te pidieron revisar “${safeTitle}”` : `Te compartieron “${safeTitle}”`,
       body: `
-        ${p(review
+        ${p(sign
+          ? `<strong>${safeSender}</strong> necesita <strong>tu firma</strong> en este documento. Firmas desde DocBlockSign con tu propia llave; cuando firmen todos, queda registrado en blockchain.`
+          : review
           ? `<strong>${safeSender}</strong> te envió este documento para que lo <strong>revises y lo apruebes o rechaces</strong>.`
           : `<strong>${safeSender}</strong> te envió este documento a través de DocBlockSign.`)}
         ${note ? callout(note, C.primary, 'Mensaje') : ''}
-        ${inApp ? callout(`También está en tu bandeja de entrada de DocBlockSign${review ? ', donde puedes aprobarlo o rechazarlo' : ''}. <a href="${appLink}" style="color:${C.primary};font-weight:700;">Abrir DocBlockSign</a>`, C.primary) : ''}
+        ${inApp ? callout(`También está en tu bandeja de entrada de DocBlockSign${sign ? ', donde puedes firmarlo o rechazarlo' : review ? ', donde puedes aprobarlo o rechazarlo' : ''}. <a href="${appLink}" style="color:${C.primary};font-weight:700;">Abrir DocBlockSign</a>`, C.primary) : ''}
         ${dataTable(rows)}
         ${attachment
           ? p('El archivo va <strong>adjunto</strong> a este correo.')

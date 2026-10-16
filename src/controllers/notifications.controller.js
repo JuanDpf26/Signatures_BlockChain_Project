@@ -27,7 +27,7 @@ const buildAll = async (userId) => {
     ),
     // Respuestas a mis solicitudes de revisión
     pool.query(
-      `SELECT s.id, s.status, s.responded_at, s.response, d.title, s.recipient_email, u.name AS reviewer
+      `SELECT s.id, s.kind, s.status, s.responded_at, s.response, d.title, s.recipient_email, u.name AS reviewer
          FROM document_shares s
          JOIN documents d ON d.id::text = s.document_id
          LEFT JOIN users u ON u.id::text = s.recipient_id
@@ -62,9 +62,11 @@ const buildAll = async (userId) => {
     const who = r.sender || r.sender_email || 'Alguien';
     out.push({
       key: `share:${r.id}`,
-      type: r.kind === 'review' ? 'review' : 'share',
+      type: r.kind === 'review' ? 'review' : r.kind === 'sign' ? 'sign' : 'share',
       text:
-        r.kind === 'review'
+        r.kind === 'sign'
+          ? `**${who}** te pidió firmar **${r.title}**`
+          : r.kind === 'review'
           ? `**${who}** te pidió revisar **${r.title}**${r.team ? ` (equipo ${r.team})` : ''}`
           : `**${who}** te compartió **${r.title}**${r.team ? ` con el equipo ${r.team}` : ''}`,
       date: r.created_at,
@@ -76,7 +78,7 @@ const buildAll = async (userId) => {
     out.push({
       key: `resp:${r.id}`,
       type: ok ? 'approved' : 'rejected',
-      text: `**${r.reviewer || r.recipient_email}** ${ok ? 'aprobó' : 'rechazó'} **${r.title}**${r.response ? `: “${String(r.response).slice(0, 90)}”` : ''}`,
+      text: `**${r.reviewer || r.recipient_email}** ${r.kind === 'sign' ? (ok ? 'firmó' : 'no quiso firmar') : ok ? 'aprobó' : 'rechazó'} **${r.title}**${r.response ? `: “${String(r.response).slice(0, 90)}”` : ''}`,
       date: r.responded_at,
       link: { section: 'inbox' },
     });
