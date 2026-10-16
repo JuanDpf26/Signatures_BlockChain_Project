@@ -46,6 +46,7 @@ const publicCosign = (c) =>
     combined_hash: c.combined_hash || null,
     signers: (c.signers || []).map((s) => ({
       position: s.position,
+      user_id: s.user_id,
       email: s.email,
       name: s.name,
       status: s.status,
