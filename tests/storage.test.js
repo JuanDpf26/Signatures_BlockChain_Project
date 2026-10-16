@@ -56,3 +56,13 @@ test('descarga el archivo desde el servidor sin usar la dirección pública', as
   const buf = await storage.download(pub('u1/a.pdf'));
   assert.strictEqual(buf.toString(), 'contenido de u1/a.pdf');
 });
+
+// Varios firmantes: la huella combinada depende de quién firmó y en qué orden
+test('huella combinada de varios firmantes: estable y sensible al orden', () => {
+  const { combinedHash } = require('../src/controllers/cosign.controller');
+  const a = { position: 1, email: 'a@x.co', signature_hash: 'aaa' };
+  const b = { position: 2, email: 'b@x.co', signature_hash: 'bbb' };
+  assert.strictEqual(combinedHash([a, b]), combinedHash([a, b]));
+  assert.notStrictEqual(combinedHash([a, b]), combinedHash([{ ...b, position: 1 }, { ...a, position: 2 }]));
+  assert.match(combinedHash([a, b]), /^[0-9a-f]{64}$/);
+});
