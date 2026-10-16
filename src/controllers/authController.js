@@ -253,6 +253,9 @@ const login = async (req, res) => {
         error: 'Debes verificar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.',
       });
     }
+    if (user.suspended) {
+      return res.status(403).json({ error: 'Tu cuenta está suspendida. Escribe al administrador de DocBlockSign.' });
+    }
 
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
@@ -344,6 +347,9 @@ const googleAuth = async (req, res) => {
     }
 
     const user = result.rows[0];
+    if (user.suspended) {
+      return res.status(403).json({ error: 'Tu cuenta está suspendida. Escribe al administrador de DocBlockSign.' });
+    }
     const token = generateToken(user.id);
 
     return res.json({

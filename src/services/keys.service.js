@@ -121,6 +121,13 @@ const verifySignature = (publicPem, payload, signatureB64) => {
 /** Hash SHA-256 de la firma: es lo que se registra en el contrato */
 const signatureDigest = (signatureB64) => crypto.createHash('sha256').update(Buffer.from(signatureB64, 'base64')).digest('hex');
 
+/** Varios firmantes: SHA-256 de las huellas de cada firma, en orden (es lo que se registra en el contrato) */
+const combinedSignatureHash = (signers) =>
+  crypto
+    .createHash('sha256')
+    .update(signers.map((s) => `${s.position}:${s.email}:${s.signature_hash}`).join('|'))
+    .digest('hex');
+
 const getPublicKey = async (userId) => {
   const r = await pool.query('SELECT algorithm, public_key_pem, fingerprint, created_at FROM user_keys WHERE user_id = $1', [String(userId)]);
   return r.rows[0] || null;
@@ -134,6 +141,7 @@ module.exports = {
   signWithUserKey,
   verifySignature,
   signatureDigest,
+  combinedSignatureHash,
   getPublicKey,
   fingerprintOf,
 };

@@ -18,7 +18,7 @@ const getProfile = async (req, res) => {
 
     const result = await pool.query(
       `SELECT id, name, email, document_id, phone, avatar_url,
-              google_id, is_email_verified, last_login, created_at
+              google_id, is_email_verified, last_login, created_at, role, email_reminders
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -409,7 +409,19 @@ const deleteAccount = async (req, res) => {
   }
 };
 
+// PATCH /api/profile/preferences { email_reminders: bool }
+const updatePreferences = async (req, res) => {
+  try {
+    if (typeof req.body?.email_reminders !== 'boolean') return res.status(400).json({ error: 'Nada que actualizar' });
+    const r = await pool.query('UPDATE users SET email_reminders = $1, updated_at = NOW() WHERE id = $2 RETURNING email_reminders', [req.body.email_reminders, req.user.id]);
+    return res.json({ message: r.rows[0].email_reminders ? 'Recordatorios activados' : 'Recordatorios desactivados', email_reminders: r.rows[0].email_reminders });
+  } catch (err) {
+    return res.status(500).json({ error: 'No se pudo guardar la preferencia' });
+  }
+};
+
 module.exports = {
+  updatePreferences,
   getProfile,
   updateProfile,
   uploadAvatar,

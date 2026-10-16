@@ -82,7 +82,7 @@ const buildWhere = (uid, email, f) => {
 const createExportLink = async (req, res) => {
   try {
     const b = req.body || {};
-    const format = b.format === 'html' ? 'html' : 'csv';
+    const format = ['html', 'pdf'].includes(b.format) ? b.format : 'csv';
     const filters = {
       action: b.action ? String(b.action).slice(0, 30) : '',
       result: ['permitido', 'denegado', 'error'].includes(b.result) ? b.result : '',
@@ -120,7 +120,7 @@ const exportAudit = async (req, res) => {
     const email = String(user.email || '').toLowerCase();
     const { where, params } = buildWhere(payload.uid, email, payload.filters || {});
     const r = await pool.query(
-      `SELECT created_at, action, description, resource, result, status_code, ip, user_agent, request_id, method, path, detail
+      `SELECT created_at, action, description, resource, result, status_code, ip, user_agent, request_id, method, path, detail, actor_email
          FROM audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT 5000`,
       params
     );
@@ -137,13 +137,27 @@ const exportAudit = async (req, res) => {
 
     logAudit({
       userId: payload.uid, actorEmail: email || null, action: 'audit.export',
-      description: `Descargó el registro de auditoría (${payload.format === 'html' ? 'informe' : 'CSV'})`,
+      description: `Descargó el registro de auditoría (${payload.format === 'csv' ? 'CSV' : 'PDF'})`,
       result: 'permitido', statusCode: 200, ip: clientIp(req), userAgent: req.headers['user-agent'], requestId: req.id,
       method: 'GET', path: '/api/audit/export', detail: { rows: rows.length, sha256: digest, filters: payload.filters },
     });
 
     res.setHeader('X-Content-SHA256', digest);
     res.setHeader('Cache-Control', 'no-store');
+    if (payload.format === 'pdf') {
+      const f = payload.filters || {};
+      const periodLabel = { '7d': 'Últimos 7 días', '30d': 'Últimos 30 días', '90d': 'Últimos 90 días', all: 'Todo el historial' }[f.period] || 'Últimos 30 días';
+      const bytes = await require('../services/report.service').buildAuditPdf({
+        user,
+        rows,
+        periodLabel,
+        filtersLabel: [f.action ? ACTION_LABELS[f.action] || f.action : 'Todas las acciones', f.result || 'todos los resultados'].join(' · '),
+        digest,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="DocBlockSign_auditoria_${stamp}.pdf"`);
+      return res.send(bytes);
+    }
     if (payload.format !== 'html') {
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="DocBlockSign_auditoria_${stamp}.csv"`);

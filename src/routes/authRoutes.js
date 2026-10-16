@@ -25,7 +25,7 @@ router.get('/me', authMiddleware, async (req, res) => {
   try {
     const pool = require('../config/db');
     const result = await pool.query(
-      'SELECT id, name, email, avatar_url, created_at, last_login FROM users WHERE id = $1',
+      'SELECT id, name, email, avatar_url, created_at, last_login, role, email_reminders FROM users WHERE id = $1',
       [req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });

@@ -14,5 +14,6 @@ router.post('/:id/flag', c.flag);
 router.post('/:id/delete', c.remove);
 router.post('/:id/reply', c.reply);
 router.post('/:id/forward', c.forward);
+router.post('/:id/remind', c.remind);
 
 module.exports = router;

@@ -411,4 +411,27 @@ const forward = async (req, res) => {
   }
 };
 
-module.exports = { listInbox, inboxSummary, getInboxItem, respond, archive, markRead, flag, remove, reply, forward };
+/** POST /api/inbox/:id/remind → quien envió una revisión o firma recuerda a quienes no han respondido */
+const remind = async (req, res) => {
+  try {
+    const f = await load(req, res);
+    if (!f) return;
+    if (f.role !== 'sender') return res.status(403).json({ error: 'Solo quien envió la solicitud puede enviar recordatorios' });
+    if (!['review', 'sign'].includes(f.share.kind)) return res.status(400).json({ error: 'Solo se recuerdan revisiones o firmas pendientes' });
+    const { SHARE_SQL, remindShare } = require('../services/reminder.service');
+    const rows = (await pool.query(
+      `${SHARE_SQL} WHERE s.batch_id = $1 AND s.kind IN ('review','sign') AND s.status IN ('sent','read')`,
+      [f.share.batch_id]
+    )).rows;
+    if (!rows.length) return res.status(409).json({ error: 'Todos ya respondieron' });
+    const ready = rows.filter((r) => !r.last_reminded_at || Date.now() - new Date(r.last_reminded_at).getTime() > 24 * 3600000);
+    if (!ready.length) return res.status(429).json({ error: 'Ya enviaste un recordatorio en las últimas 24 horas' });
+    for (const r of ready) await remindShare(r, { manual: true });
+    return res.json({ message: `Recordatorio enviado a ${ready.length} ${ready.length === 1 ? 'persona' : 'personas'}`, sent: ready.length });
+  } catch (err) {
+    console.error('ERROR REMIND:', err.message);
+    return res.status(502).json({ error: 'No se pudo enviar el recordatorio' });
+  }
+};
+
+module.exports = { listInbox, inboxSummary, getInboxItem, respond, archive, markRead, flag, remove, reply, forward, remind };

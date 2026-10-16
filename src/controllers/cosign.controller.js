@@ -58,11 +58,7 @@ const publicCosign = (c) =>
   };
 
 /** Huella combinada: SHA-256 de las huellas de cada firma, en orden */
-const combinedHash = (signers) =>
-  crypto
-    .createHash('sha256')
-    .update(signers.map((s) => `${s.position}:${s.email}:${s.signature_hash}`).join('|'))
-    .digest('hex');
+const combinedHash = (signers) => keys.combinedSignatureHash(signers);
 
 /** Avisa (bandeja + correo) a quien le toca firmar. Si es el dueño, lo verá en el detalle. */
 const notifyTurn = async (doc, cosign, signer, owner) => {

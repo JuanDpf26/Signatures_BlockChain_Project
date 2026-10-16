@@ -477,6 +477,42 @@ const buildVerification = async (hash) => {
     };
   }
 
+  // Varios firmantes: cada firma con la llave de su firmante y la huella combinada contra el contrato
+  if (!sigInfo && meta.cosign?.status === 'completed') {
+    const signers = meta.cosign.signers || [];
+    let allOk = signers.length > 0;
+    for (const s of signers) {
+      const pk = await keys.getPublicKey(s.user_id).catch(() => null);
+      const ok = !!pk && !!s.signature_value && keys.verifySignature(pk.public_key_pem, s.signature_payload, s.signature_value)
+        && String(s.signature_payload || '').includes(`doc:${h}`);
+      if (!ok) allOk = false;
+    }
+    steps.push({
+      key: 'cosigners',
+      label: `Firmas de los ${signers.length} firmantes (ECDSA P-256)`,
+      ok: allOk,
+      detail: allOk ? signers.map((s) => s.name || s.email).join(', ') : 'Alguna firma no corresponde a la llave de su firmante',
+    });
+    let linkOk = null;
+    if (chain.onChain && chain.signatureHash) {
+      linkOk = String(chain.signatureHash).toLowerCase().replace(/^0x/, '') === keys.combinedSignatureHash(signers);
+      steps.push({
+        key: 'chain_link',
+        label: 'Las firmas coinciden con la registrada en blockchain',
+        ok: linkOk,
+        detail: linkOk ? 'La huella combinada de las firmas es la que guarda el contrato' : 'La huella combinada no coincide con el contrato',
+      });
+    }
+    sigInfo = {
+      algorithm: `${keys.ALGORITHM} · ${signers.length} firmantes`,
+      fingerprint: null,
+      publicKey: null,
+      signedAt: meta.cosign.completed_at || null,
+      signers: signers.map((s) => ({ name: s.name, email: s.email, signedAt: s.signed_at, fingerprint: s.key_fingerprint })),
+      valid: allOk && linkOk !== false,
+    };
+  }
+
   let verdict = 'not_registered';
   if (chain.onChain) verdict = chain.isValid ? 'authentic' : 'revoked';
   if (verdict === 'authentic' && sigInfo && !sigInfo.valid) verdict = 'invalid_signature';
@@ -627,7 +663,36 @@ const revokeSignature = async (req, res) => {
   }
 };
 
+// POST /api/signing/receipt { hash, fileName? } → comprobante en PDF de la verificación
+const verificationReceipt = async (req, res) => {
+  try {
+    const hash = String(req.body?.hash || '');
+    if (!/^[0-9a-fA-F]{64}$/.test(hash)) return res.status(400).json({ error: 'Huella no válida' });
+    const v = await buildVerification(hash);
+    const u = (await pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id])).rows[0] || {};
+    const front = (process.env.APP_BASE_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');
+    const bytes = await require('../services/report.service').buildReceiptPdf({
+      v,
+      checkedBy: u,
+      verifyUrl: `${front}/#/verify?hash=${encodeURIComponent(v.hash || hash)}`,
+      fileName: req.body?.fileName ? String(req.body.fileName).slice(0, 150) : null,
+    });
+    logAudit({ userId: req.user.id, actorEmail: u.email, action: 'verify.receipt', description: 'Descargó el comprobante de verificación', resource: hash.slice(0, 16), result: 'permitido', detail: { verdict: v.verdict } });
+    if (String(req.query.inline || '') === '1') {
+      res.setHeader('Content-Type', 'application/pdf');
+      return res.send(bytes);
+    }
+    const storage = require('../services/storage.service');
+    const url = await storage.uploadAndSign(`comprobantes/${req.user.id}/${hash.slice(0, 16)}-${Date.now()}.pdf`, bytes);
+    return res.json({ url, verdict: v.verdict });
+  } catch (err) {
+    console.error('ERROR RECEIPT:', err);
+    return res.status(500).json({ error: 'No se pudo generar el comprobante' });
+  }
+};
+
 module.exports = {
+  verificationReceipt,
   registerOnChain,
   buildVerification,
   signDocument,

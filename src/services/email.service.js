@@ -625,7 +625,38 @@ const sendShareResponseEmail = async ({ to, senderName, reviewer, title, decisio
   });
 };
 
+/** Recordatorio: una revisión o una firma lleva días esperando */
+const sendReminderEmail = async ({ to, name, sender, title, kind, days, message }) => {
+  const sign = kind === 'sign';
+  const safeTitle = escapeHtml(title);
+  const who = escapeHtml(sender?.name || sender?.email || 'Alguien');
+  const ago = days <= 1 ? 'desde ayer' : `hace ${days} días`;
+  const appLink = `${cfg().frontend}/#/login`;
+  return sendEmail({
+    to,
+    replyTo: sender?.email || undefined,
+    subject: sign ? `Recordatorio: falta tu firma en "${title}"` : `Recordatorio: "${title}" espera tu revisión`,
+    text:
+      `Hola ${name || ''}, ${sender?.name || sender?.email || 'alguien'} te pidió ${sign ? 'firmar' : 'revisar'} "${title}" ${ago} y todavía está pendiente.\n\n` +
+      `Ábrelo en tu bandeja de DocBlockSign: ${appLink}\n\n` +
+      'Puedes desactivar estos recordatorios en Configuración → General.',
+    html: layout({
+      preheader: sign ? `Falta tu firma en ${title}` : `${title} espera tu revisión`,
+      accent: sign ? C.success : C.warning,
+      eyebrow: 'Recordatorio',
+      title: sign ? 'Falta tu firma' : 'Una revisión te espera',
+      body: `
+        ${p(`Hola <strong>${escapeHtml(name || '')}</strong>, <strong>${who}</strong> te pidió ${sign ? '<strong>firmar</strong>' : '<strong>revisar</strong>'} <strong>“${safeTitle}”</strong> ${ago} y todavía está pendiente.`)}
+        ${message ? callout(escapeHtml(message).replace(/\r?\n/g, '<br>'), C.primary, 'Mensaje original') : ''}
+        ${button(appLink, sign ? 'Firmar ahora' : 'Revisar ahora')}
+        ${p('Puedes desactivar estos recordatorios en <strong>Configuración → General</strong> dentro de DocBlockSign.', `font-size:12px;color:${C.hint};`)}`,
+      reason: 'Recibes este correo porque tienes una solicitud pendiente en DocBlockSign.',
+    }),
+  });
+};
+
 module.exports = {
+  sendReminderEmail,
   sendVerificationEmail,
   sendWelcomeEmail,
   sendPasswordResetEmail,

@@ -28,7 +28,8 @@ app.set('trust proxy', 1); // IP real detrás de un proxy (Render, Vercel…)
 // Auditoría: crea la tabla si no existe
 initAudit();
 initKeys();
-initCollab();
+// Primero las tablas de colaboración; después las columnas nuevas de cuentas y los recordatorios
+initCollab().then(() => require('./services/account.service').initAccount()).then(() => require('./services/reminder.service').startReminders());
 
 // Seguridad
 app.use(helmet({ crossOriginOpenerPolicy: false }));
@@ -59,6 +60,7 @@ app.use('/api/keys', keysRoutes);
 app.use('/api/teams', teamsRoutes);
 app.use('/api/inbox', inboxRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

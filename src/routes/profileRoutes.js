@@ -33,6 +33,7 @@ router.post('/signature', uploadSignature);
 router.get('/signature', getSignature);
 router.delete('/signature', deleteSignature);
 router.patch('/password', changePassword);
+router.patch('/preferences', require('../controllers/profileController').updatePreferences);
 router.delete('/', deleteAccount);
 
 module.exports = router;

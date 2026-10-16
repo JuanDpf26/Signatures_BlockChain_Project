@@ -18,6 +18,7 @@ router.get('/network', getNetwork);
 router.use(authMiddleware);
 // Verificación por huella: solo usuarios con sesión (antes era pública)
 router.get('/hash/:hash', verifyDocumentPublic);
+router.post('/receipt', require('../controllers/signing.controller').verificationReceipt);
 router.post('/:id/sign', signDocument);
 router.get('/:id/status', getSigningStatus);
 router.get('/:id/verify', verifyDocument);
