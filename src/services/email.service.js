@@ -175,7 +175,8 @@ const sendViaBrevo = async ({ to, bcc, subject, html, text, attachments, replyTo
 
 // Envío genérico: intenta 465 y, si es un problema de red, reintenta por 587
 const sendEmail = async ({ to, bcc, subject, html, text, link, attachments, replyTo }) => {
-  if (link) console.log(`[email] Enlace para ${to}: ${link}`); // siempre visible, aunque el correo falle
+  // El enlace (con token) solo se imprime fuera de producción: en producción quedaría en los logs
+  if (link && process.env.NODE_ENV !== 'production') console.log(`[email] Enlace para ${to}: ${link}`);
   const problem = configProblem();
   if (problem) {
     console.error(`[email] ${problem}`);
@@ -213,6 +214,11 @@ const verifyEmailTransport = async () => {
   if (problem) {
     console.error(`[email] ${problem}`);
     return false;
+  }
+  const g = cfg();
+  const faltan = [!g.gmailId && 'GMAIL_CLIENT_ID', !g.gmailSecret && 'GMAIL_CLIENT_SECRET', !g.gmailRefresh && 'GMAIL_REFRESH_TOKEN'].filter(Boolean);
+  if (faltan.length && faltan.length < 3) {
+    console.error(`[email] API de Gmail incompleta, falta: ${faltan.join(', ')}. Se usará otro proveedor.`);
   }
   if (useGmailApi()) {
     console.log(`[email] Envío por la API de Gmail (HTTPS) como ${cfg().user}`);
