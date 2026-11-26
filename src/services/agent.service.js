@@ -266,7 +266,7 @@ const reviewDocument = async (doc) => {
 Máximo 5 alertas. Listas vacías si no aplica.
 
 TEXTO:
-"""${text.slice(0, 14000)}"""`,
+"""${text.slice(0, 5000)}"""`,
       },
     ];
   let review;
@@ -277,7 +277,7 @@ TEXTO:
       break;
     } catch (err) {
       lastErr = err;
-      if (isModelError(err) || isJsonError(err)) continue;
+      if (isModelError(err) || isJsonError(err) || err?.status === 413 || err?.status === 429) continue;
       throw err;
     }
   }

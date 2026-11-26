@@ -180,7 +180,14 @@ const explainGroqError = (err) => {
   const code = groqErrorCode(err);
   if (err?.status === 401 || code === 'invalid_api_key')
     return 'GROQ_API_KEY inválida o revocada. Crea una nueva en https://console.groq.com/keys y ponla en el .env (las claves publicadas en GitHub se revocan solas).';
-  if (err?.status === 429) return 'Límite de uso de Groq alcanzado; intenta de nuevo en unos minutos.';
+  if (err?.status === 413 || (code === 'rate_limit_exceeded' && /tokens per minute|too large/i.test(err?.message || '')))
+    return 'El documento es demasiado extenso para analizarlo con IA en este momento. Prueba con un archivo más corto o inténtalo de nuevo en un minuto.';
+  if (err?.status === 429 || code === 'rate_limit_exceeded')
+    return 'Se alcanzó el límite de uso del servicio de IA; intenta de nuevo en unos minutos.';
+  if (err?.status >= 500)
+    return 'El servicio de IA no está disponible en este momento. Intenta de nuevo en unos minutos.';
+  if (isModelError(err))
+    return 'El modelo de IA configurado no está disponible. Avisa al administrador del sistema.';
   if (code === 'json_validate_failed' || /no devolvió JSON/i.test(err?.message || ''))
     return 'La IA no logró generar una respuesta válida para este documento. Intenta analizarlo de nuevo.';
   if (['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes(err?.cause?.code || err?.code))
@@ -302,6 +309,10 @@ Responde con este JSON exacto:
       }
       if (isJsonError(err)) {
         console.warn(`⚠️ [IA] ${model} no generó un JSON válido; probando el siguiente modelo…`);
+        continue;
+      }
+      if (err?.status === 413 || err?.status === 429) {
+        console.warn(`⚠️ [IA] ${model} superó su límite (${err.status}); probando el siguiente modelo…`);
         continue;
       }
       break; // clave inválida, red, límite, JSON…: no sirve cambiar de modelo
